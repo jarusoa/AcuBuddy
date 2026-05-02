@@ -14,6 +14,18 @@ TEXT_LOADER = TextLoader
 
 EXCLUDE_EXTS = {".gitkeep", ".db", ".bin", ".pickle", ".parquet", ".lock"}
 PDF_EXTS = {".pdf"}
+BINARY_CHUNK = 1024
+NULL_THRESHOLD = 0.05
+
+
+def _is_binary(file_path: str) -> bool:
+    try:
+        with open(file_path, "rb") as f:
+            chunk = f.read(BINARY_CHUNK)
+        null_count = chunk.count(0)
+        return (null_count / len(chunk)) > NULL_THRESHOLD if chunk else False
+    except OSError:
+        return True
 
 
 def _get_loader(file_path: str):
@@ -35,6 +47,9 @@ def load_documents(data_dir: str):
             if ext in EXCLUDE_EXTS:
                 continue
             fpath = os.path.join(root, fname)
+            if _is_binary(fpath):
+                print(f"  SKIP {fpath}: binary file")
+                continue
             try:
                 loader = _get_loader(fpath)
                 file_docs = loader.load()
@@ -60,13 +75,20 @@ def split_documents(docs):
     return chunks
 
 
-def build_index(docs, persist_dir: str):
-    embeddings = HuggingFaceEmbeddings(
+def _make_embeddings():
+    cache = os.path.join(os.path.dirname(__file__), "..", ".embedding_cache")
+    cache = os.path.abspath(cache)
+    return HuggingFaceEmbeddings(
         model_name=EMBEDDING_MODEL,
         model_kwargs={"device": "cpu"},
         encode_kwargs={"normalize_embeddings": True},
+        cache_folder=cache,
     )
+
+
+def build_index(docs, persist_dir: str):
     os.makedirs(persist_dir, exist_ok=True)
+    embeddings = _make_embeddings()
 
     vecstore = Chroma.from_documents(
         documents=docs,
@@ -82,11 +104,7 @@ def load_index(persist_dir: str):
     if not os.path.isdir(persist_dir):
         raise FileNotFoundError(f"Index directory not found: {persist_dir}")
 
-    embeddings = HuggingFaceEmbeddings(
-        model_name=EMBEDDING_MODEL,
-        model_kwargs={"device": "cpu"},
-        encode_kwargs={"normalize_embeddings": True},
-    )
+    embeddings = _make_embeddings()
     vecstore = Chroma(
         persist_directory=persist_dir,
         embedding_function=embeddings,

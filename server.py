@@ -9,15 +9,20 @@ Endpoints:
     GET  /health                Health check
 """
 
+import asyncio
 import json
 import os
+import sys
+import threading
 import time
 import uuid
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
+from pydantic import BaseModel
 
 from acu_buddy.rag import load_index, search
 
@@ -28,6 +33,8 @@ DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 INDEX_DIR = os.path.join(os.path.dirname(__file__), "chroma_db")
 SEARCH_K = int(os.getenv("ACUBUDDY_SEARCH_K", "5"))
 MODEL_ID = "acubuddy-deepseek-v4"
+CHROMA_LOCK = threading.Lock()
+_vecstore = None
 
 SYSTEM_PROMPT = (
     "You are an Acumatica ERP development assistant. "
@@ -39,23 +46,45 @@ SYSTEM_PROMPT = (
 )
 
 app = FastAPI(title="AcuBuddy", version="1.0.0")
-_vecstore = None
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class ChatRequest(BaseModel):
+    model: str = MODEL_ID
+    messages: list[ChatMessage]
+    temperature: float = 0.7
+    stream: bool = False
 
 
 def _get_vecstore():
     global _vecstore
     if _vecstore is None:
-        if not os.path.isdir(INDEX_DIR):
-            raise RuntimeError(
-                "Vector index not found. Run 'python build_index.py' first."
-            )
-        _vecstore = load_index(INDEX_DIR)
+        with CHROMA_LOCK:
+            if _vecstore is None:
+                if not os.path.isdir(INDEX_DIR):
+                    raise RuntimeError(
+                        "Vector index not found. Run 'python build_index.py' first."
+                    )
+                _vecstore = load_index(INDEX_DIR)
     return _vecstore
 
 
-def _build_context(query: str) -> str:
+async def _build_context(query: str) -> str:
+    """Search vector DB in a thread to avoid blocking the event loop."""
     vecstore = _get_vecstore()
-    chunks = search(vecstore, query, k=SEARCH_K)
+    chunks = await asyncio.to_thread(search, vecstore, query, k=SEARCH_K)
     if not chunks:
         return ""
     return "\n\n---\n\n".join(
@@ -63,7 +92,7 @@ def _build_context(query: str) -> str:
     )
 
 
-def _inject_context(messages: list[dict]) -> tuple[list[dict], str]:
+async def _inject_context(messages: list[dict]) -> tuple[list[dict], str]:
     user_query = ""
     for msg in reversed(messages):
         if msg.get("role") == "user":
@@ -72,29 +101,24 @@ def _inject_context(messages: list[dict]) -> tuple[list[dict], str]:
 
     context = ""
     try:
-        context = _build_context(user_query)
+        context = await _build_context(user_query)
     except RuntimeError:
         pass
 
     system_content = SYSTEM_PROMPT
     if context:
-        system_content += f"\n\nRelevant Acumatica documentation:\n\n{context}"
+        system_content += (
+            f"\n\nRelevant Acumatica documentation:\n\n{context}"
+            "\n\nUse the documentation excerpts above to answer the user's question accurately."
+        )
 
     api_messages = [{"role": "system", "content": system_content}]
-    if context:
-        api_messages.append({
-            "role": "system",
-            "content": "Use the documentation excerpts above to answer the user's question accurately.",
-        })
     api_messages.extend(messages)
 
     return api_messages, user_query
 
 
 async def _stream_deepseek(api_messages: list[dict], temperature: float, model_id: str):
-    if not DEEPSEEK_API_KEY:
-        raise RuntimeError("DEEPSEEK_API_KEY not set. Create a .env file.")
-
     headers = {
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
         "Content-Type": "application/json",
@@ -156,9 +180,6 @@ async def _stream_deepseek(api_messages: list[dict], temperature: float, model_i
 
 
 async def _call_deepseek_async(api_messages: list[dict], temperature: float) -> dict:
-    if not DEEPSEEK_API_KEY:
-        raise RuntimeError("DEEPSEEK_API_KEY not set. Create a .env file.")
-
     headers = {
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
         "Content-Type": "application/json",
@@ -179,6 +200,18 @@ async def _call_deepseek_async(api_messages: list[dict], temperature: float) -> 
         )
         resp.raise_for_status()
         return resp.json()
+
+
+@app.on_event("startup")
+async def startup():
+    errors = []
+    if not DEEPSEEK_API_KEY:
+        errors.append("DEEPSEEK_API_KEY")
+    if not os.path.isdir(INDEX_DIR):
+        errors.append("vector index (run 'python build_index.py')")
+
+    if errors:
+        print(f"WARNING: Missing {' and '.join(errors)}.", file=sys.stderr)
 
 
 @app.get("/health")
@@ -202,24 +235,20 @@ async def list_models():
 
 
 @app.post("/v1/chat/completions")
-async def chat_completions(request: Request):
-    data = await request.json()
-    if not data or "messages" not in data:
-        return JSONResponse({"error": "messages field is required"}, status_code=400)
+async def chat_completions(body: ChatRequest):
+    messages = [m.model_dump() for m in body.messages]
 
-    messages = data.get("messages", [])
-    temperature = float(data.get("temperature", 0.7))
-    do_stream = data.get("stream", False)
-
-    api_messages, user_query = _inject_context(messages)
+    api_messages, user_query = await _inject_context(messages)
 
     if not user_query:
         return JSONResponse({"error": "No user message found"}, status_code=400)
 
-    if do_stream:
+    if body.stream:
         async def event_stream():
             try:
-                async for chunk in _stream_deepseek(api_messages, temperature, MODEL_ID):
+                async for chunk in _stream_deepseek(
+                    api_messages, body.temperature, MODEL_ID
+                ):
                     yield chunk
             except Exception as e:
                 error_payload = json.dumps({
@@ -238,7 +267,7 @@ async def chat_completions(request: Request):
         )
 
     try:
-        deepseek_resp = await _call_deepseek_async(api_messages, temperature)
+        deepseek_resp = await _call_deepseek_async(api_messages, body.temperature)
     except Exception as e:
         return JSONResponse(
             {"error": f"DeepSeek API error: {str(e)}"}, status_code=502
@@ -251,7 +280,7 @@ async def chat_completions(request: Request):
         "id": f"chatcmpl-{uuid.uuid4().hex[:29]}",
         "object": "chat.completion",
         "created": int(time.time()),
-        "model": MODEL_ID,
+        "model": body.model,
         "choices": [
             {
                 "index": 0,

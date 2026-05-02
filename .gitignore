@@ -8,5 +8,6 @@ build/
 venv/
 .venv/
 chroma_db/
+.embedding_cache/
 *.db
 .vscode/settings.json

@@ -48,7 +48,7 @@ def main():
     print(f"Building vector index in {args.index_dir} ...")
     build_index(chunks, args.index_dir)
 
-    print("Done. Start the server with: python server.py")
+    print("Done. Start the server with: uvicorn server:app --host 127.0.0.1 --port 5000 --reload")
 
 
 if __name__ == "__main__":

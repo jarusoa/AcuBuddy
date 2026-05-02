@@ -14,6 +14,5 @@
       }
     }
   },
-  "model": "acubuddy/acubuddy-deepseek-v4",
-  "small_model": "acubuddy/acubuddy-deepseek-v4"
+  "model": "acubuddy/acubuddy-deepseek-v4"
 }
