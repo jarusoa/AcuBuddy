@@ -31,16 +31,6 @@ opencode
 
 The bundled `opencode.json` points OpenCode straight at DeepSeek and registers AcuBuddy as an MCP server. OpenCode spawns the MCP server on startup and exposes its tools to the model. Project-level agent instructions live in `AGENTS.md` (auto-discovered by OpenCode and most MCP-aware clients) — they enforce the advisory-only "Code Recipe" output format so the model never edits your `.cs` / `.aspx` files directly.
 
-## Optional: legacy proxy
-
-`server.py` is a FastAPI proxy that injects RAG into the system prompt and forwards to DeepSeek (the original architecture before MCP). It still works:
-
-```powershell
-uvicorn server:app --host 127.0.0.1 --port 5000 --reload
-```
-
-You can keep it around for non-MCP clients, but the MCP server is the canonical retrieval layer now — having both active means duplicated retrieval per turn.
-
 ## Using with OpenCode
 
 An `opencode.json` is included. OpenCode auto-discovers it when you run `opencode` in this directory.
@@ -59,7 +49,7 @@ Environment variables (in `.env`):
 | Variable                   | Default                  | Description                                         |
 |----------------------------|--------------------------|-----------------------------------------------------|
 | `DEEPSEEK_API_KEY`         | —                        | DeepSeek API key (required by OpenCode)             |
-| `DEEPSEEK_MODEL`           | `deepseek-chat`          | Only used by the legacy proxy                       |
+| `ACUBUDDY_PROJECT_ROOT`    | —                        | Customization project source folder (enables project tools) |
 | `ACUBUDDY_SEARCH_K`        | `5`                      | Default `k` for `search_docs`                       |
 | `ACUBUDDY_INDEX_DIR`       | `./chroma_db`            | Where the hybrid index lives                        |
 | `ACUBUDDY_EMBEDDING_MODEL` | `BAAI/bge-large-en-v1.5` | Dense embedding model                               |
@@ -171,8 +161,3 @@ Then rebuild the index:
 ```powershell
 python build_index.py --clean
 ```
-
-## VS Code task
-
-`Ctrl+Shift+B` (Run Build Task) starts the legacy proxy via uvicorn. Open Command Palette → "Tasks: Run Task" → "Start AcuBuddy Server".
-

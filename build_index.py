@@ -74,7 +74,7 @@ def main():
     print(f"Building hybrid index in {index_dir} ...")
     build_index(chunks, str(index_dir))
 
-    print("Done. Start the server with: uvicorn server:app --host 127.0.0.1 --port 5000 --reload")
+    print("Done. Start a client (e.g. `opencode`) — it will spawn the MCP server defined in opencode.json.")
 
 
 if __name__ == "__main__":
