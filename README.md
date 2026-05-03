@@ -1,12 +1,12 @@
 # AcuBuddy
 
-RAG-based coding assistant for Acumatica ERP development, powered by DeepSeek V4.
+Acumatica ERP coding assistant. Hybrid retrieval (BM25 + dense + cross-encoder rerank) over the Acumatica documentation, exposed as MCP tools so any MCP-aware client (OpenCode, Claude Code, Continue, Cline, Cursor) can search docs as the model needs them.
 
 ## How it works
 
-1. **Index** — Place Acumatica documentation (PDFs, `.txt`, `.md`, `.xml`, `.cs`, etc.) in `data/`, then run `build_index.py` to create a local vector database.
-2. **Serve** — Start the FastAPI server that exposes an OpenAI-compatible `/v1/chat/completions` endpoint with streaming support.
-3. **Ask** — Point OpenCode (or any OpenAI client) at `http://127.0.0.1:5000/v1`. Every query searches the vector DB for relevant docs, then sends them as context to DeepSeek V4.
+1. **Index** — Place Acumatica documentation (PDFs, `.txt`, `.md`, `.xml`, `.cs`, etc.) in `data/`, then run `build_index.py` to build a hybrid index: dense (BAAI/bge-large-en-v1.5 in Chroma) + sparse (BM25) + section-aware metadata.
+2. **Serve** — Start the MCP server (`python -m acu_buddy.mcp_server`). It exposes search tools over stdio.
+3. **Ask** — Point OpenCode (or another MCP client) at this folder. The model calls `search_docs`, `find_code_samples`, `get_section`, `list_doc_sources` as needed and answers with citations.
 
 ## Quick start
 
@@ -20,68 +20,53 @@ pip install -r requirements.txt
 
 # 3. Set your API key
 copy .env.example .env
-# Edit .env and add your DEEPSEEK_API_KEY
+# Edit .env and add your DEEPSEEK_API_KEY (used by OpenCode to call DeepSeek directly)
 
 # 4. Build the index (after adding docs to data/)
-python build_index.py
+python build_index.py --clean
 
-# 5. Start the server
+# 5. Run OpenCode in this directory
+opencode
+```
+
+The bundled `opencode.json` points OpenCode straight at DeepSeek and registers AcuBuddy as an MCP server. OpenCode spawns the MCP server on startup and exposes its tools to the model.
+
+## Optional: legacy proxy
+
+`server.py` is a FastAPI proxy that injects RAG into the system prompt and forwards to DeepSeek (the original architecture before MCP). It still works:
+
+```powershell
 uvicorn server:app --host 127.0.0.1 --port 5000 --reload
 ```
 
-The server starts at `http://127.0.0.1:5000`. Auto-generated API docs at `http://127.0.0.1:5000/docs`.
-
-## API Endpoints
-
-| Method | Path                    | Description                    |
-|--------|-------------------------|--------------------------------|
-| GET    | `/health`              | Health check                   |
-| GET    | `/v1/models`           | List available models          |
-| POST   | `/v1/chat/completions` | OpenAI-compatible (streaming + non-streaming) |
+You can keep it around for non-MCP clients, but the MCP server is the canonical retrieval layer now — having both active means duplicated retrieval per turn.
 
 ## Using with OpenCode
 
 An `opencode.json` is included. OpenCode auto-discovers it when you run `opencode` in this directory.
 
-The config registers AcuBuddy as a custom provider with an OpenAI-compatible backend. When you chat with OpenCode, it sends requests through the local server, which:
-1. Searches the vector DB for relevant Acumatica docs
-2. Injects them as context into the system prompt
-3. Forwards everything to DeepSeek V4 (with streaming)
-4. Returns the response in OpenAI format
+The config:
+- Registers `deepseek-chat` (displayed as "DeepSeek V4 Pro") as the active model
+- Reads `DEEPSEEK_API_KEY` from your environment
+- Spawns `python -m acu_buddy.mcp_server` and exposes its tools to the model
+
+When you ask an Acumatica question, the model decides whether to call `search_docs`, refines with filters (`area="customization"`, `doc_type="reference"`), and may call `get_section` to read a full section. Answers cite source PDFs with page ranges.
 
 ## Configuration
 
-All settings via environment variables (in `.env`):
+Environment variables (in `.env`):
 
-| Variable            | Default              | Description                     |
-|---------------------|----------------------|---------------------------------|
-| `DEEPSEEK_API_KEY`  | —                    | DeepSeek API key (required)     |
-| `ACUBUDDY_SEARCH_K` | `5`                  | Number of doc chunks to retrieve|
+| Variable                   | Default                  | Description                                         |
+|----------------------------|--------------------------|-----------------------------------------------------|
+| `DEEPSEEK_API_KEY`         | —                        | DeepSeek API key (required by OpenCode)             |
+| `DEEPSEEK_MODEL`           | `deepseek-chat`          | Only used by the legacy proxy                       |
+| `ACUBUDDY_SEARCH_K`        | `5`                      | Default `k` for `search_docs`                       |
+| `ACUBUDDY_INDEX_DIR`       | `./chroma_db`            | Where the hybrid index lives                        |
+| `ACUBUDDY_EMBEDDING_MODEL` | `BAAI/bge-large-en-v1.5` | Dense embedding model                               |
+| `ACUBUDDY_RERANKER_MODEL`  | `BAAI/bge-reranker-base` | Cross-encoder for reranking                         |
+| `ACUBUDDY_USE_RERANKER`    | `1`                      | Set `0` to skip reranking (faster, lower quality)   |
 
-Port and host are uvicorn CLI arguments (see quick start).
-
-## Adding documentation
-
-Drop Acumatica documentation files into `data/`. Supported formats:
-- `.pdf` — PDF documents (via PyMuPDF for best extraction)
-- `.txt`, `.md`, `.rst` — Text/markdown
-- `.xml`, `.html` — Markup
-- `.cs`, `.sql`, `.js`, `.py`, `.ts` — Code files
-
-Then rebuild the index:
-```powershell
-python build_index.py
-```
-
-## VS Code
-
-`Ctrl+Shift+B` (Run Build Task) starts the server using uvicorn with hot-reload. Or open Command Palette → "Tasks: Run Task" → "Start AcuBuddy Server".
-
-## MCP server (recommended)
-
-The same hybrid retrieval is also exposed as an MCP server, so any MCP-aware client (Claude Code, OpenCode, Continue, Cline, Cursor, …) can call the search tools directly. The model can issue **multiple searches per turn** with different filters — that's the main reliability win over the chat-completion proxy.
-
-Tools exposed:
+## MCP tools
 
 | Tool                | Purpose                                                       |
 |---------------------|---------------------------------------------------------------|
@@ -90,12 +75,9 @@ Tools exposed:
 | `get_section`       | Fetch the full text of one section by source + title           |
 | `list_doc_sources`  | Enumerate every indexed PDF and its sections                   |
 
-Run it (stdio):
-```powershell
-python -m acu_buddy.mcp_server
-```
+The model can call these multiple times per turn with different filters — that's the main reliability win over single-shot RAG.
 
-### Wiring it into clients
+## Wiring into other clients
 
 **Claude Code** — add to `.mcp.json` in the repo using AcuBuddy:
 ```json
@@ -104,19 +86,6 @@ python -m acu_buddy.mcp_server
     "acubuddy": {
       "command": "python",
       "args": ["-m", "acu_buddy.mcp_server"],
-      "cwd": "C:/path/to/AcuBuddy"
-    }
-  }
-}
-```
-
-**OpenCode** — extend the existing `opencode.json`:
-```json
-{
-  "mcp": {
-    "acubuddy": {
-      "type": "local",
-      "command": ["python", "-m", "acu_buddy.mcp_server"],
       "cwd": "C:/path/to/AcuBuddy"
     }
   }
@@ -132,15 +101,22 @@ mcpServers:
     cwd: C:/path/to/AcuBuddy
 ```
 
-**Visual Studio (no native MCP)** — run OpenCode or Aider in a terminal pane next to VS, configured as above. The model sees the tools, edits files on disk, VS picks up the changes.
+**Visual Studio (no native MCP)** — run OpenCode or Aider in a terminal pane next to VS, configured the same way. The model sees the tools, edits files on disk, VS picks up the changes.
 
-### Environment variables (MCP server)
+## Adding documentation
 
-| Variable                   | Default               | Description                                              |
-|----------------------------|-----------------------|----------------------------------------------------------|
-| `ACUBUDDY_INDEX_DIR`       | `./chroma_db`         | Where the hybrid index lives                             |
-| `ACUBUDDY_SEARCH_K`        | `5`                   | Default `k` for `search_docs`                            |
-| `ACUBUDDY_EMBEDDING_MODEL` | `BAAI/bge-large-en-v1.5` | Dense embedding model                                 |
-| `ACUBUDDY_RERANKER_MODEL`  | `BAAI/bge-reranker-base` | Cross-encoder for reranking                           |
-| `ACUBUDDY_USE_RERANKER`    | `1`                   | Set `0` to skip reranking (faster, lower quality)        |
+Drop Acumatica documentation files into `data/`. Supported formats:
+- `.pdf` — PDF documents (via PyMuPDF, with TOC-aware section splitting)
+- `.txt`, `.md`, `.rst` — Text/markdown
+- `.xml`, `.html` — Markup
+- `.cs`, `.sql`, `.js`, `.py`, `.ts` — Code files
+
+Then rebuild the index:
+```powershell
+python build_index.py --clean
+```
+
+## VS Code task
+
+`Ctrl+Shift+B` (Run Build Task) starts the legacy proxy via uvicorn. Open Command Palette → "Tasks: Run Task" → "Start AcuBuddy Server".
 

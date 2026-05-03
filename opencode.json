@@ -1,18 +1,26 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "provider": {
-    "acubuddy": {
+    "deepseek": {
       "npm": "@ai-sdk/openai-compatible",
-      "name": "AcuBuddy RAG",
+      "name": "DeepSeek",
       "options": {
-        "baseURL": "http://127.0.0.1:5000/v1"
+        "baseURL": "https://api.deepseek.com/v1",
+        "apiKey": "{env:DEEPSEEK_API_KEY}"
       },
       "models": {
-        "acubuddy-deepseek-v4": {
-          "name": "DeepSeek V4 (AcuBuddy RAG)"
+        "deepseek-chat": {
+          "name": "DeepSeek V4 Pro"
         }
       }
     }
   },
-  "model": "acubuddy/acubuddy-deepseek-v4"
+  "model": "deepseek/deepseek-chat",
+  "mcp": {
+    "acubuddy": {
+      "type": "local",
+      "command": ["python", "-m", "acu_buddy.mcp_server"],
+      "enabled": true
+    }
+  }
 }
