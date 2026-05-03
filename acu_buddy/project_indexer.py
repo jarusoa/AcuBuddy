@@ -32,7 +32,29 @@ from pathlib import Path
 CATALOG_VERSION = 1
 CATALOG_FILENAME = "project_catalog.json"
 
-EXCLUDE_DIRS = {"obj", "bin", ".git", ".vs", "node_modules", "packages"}
+# Comparison is case-insensitive (see _is_excluded_dir) so Windows folders
+# like "Bin" or "App_Data" match these lowercase names.
+EXCLUDE_DIRS = {
+    # Build / VCS / dependency caches
+    "obj",
+    "bin",
+    ".git",
+    ".vs",
+    "node_modules",
+    "packages",
+    # Acumatica wwwroot folders that are not user customization source
+    "app_data",
+    "app_code",
+    "websitecache",
+    "websitevalidation",
+    "cstpublished",
+    "frames",
+    "pages",  # stock Acumatica pages live here; user customization pages live in CstSrc
+}
+
+
+def _is_excluded_dir(name: str) -> bool:
+    return name.lower() in EXCLUDE_DIRS
 
 EVENT_FIELD_KINDS = (
     "FieldSelecting",
@@ -455,7 +477,7 @@ def build_catalog(project_root: str) -> ProjectCatalog:
     file_count = 0
 
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS]
+        dirnames[:] = [d for d in dirnames if not _is_excluded_dir(d)]
         for fname in filenames:
             if not fname.endswith(".cs"):
                 continue
@@ -498,7 +520,7 @@ def search_text(project_root: str, query: str, file_glob: str | None = None, max
         pattern_re = re.compile(fnmatch.translate(file_glob), re.IGNORECASE)
 
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS]
+        dirnames[:] = [d for d in dirnames if not _is_excluded_dir(d)]
         for fname in filenames:
             fpath = os.path.join(dirpath, fname)
             rel = os.path.relpath(fpath, root)

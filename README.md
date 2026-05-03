@@ -100,6 +100,13 @@ $env:ACUBUDDY_PROJECT_ROOT = "C:\path\to\Your.Customization\Source"
 python index_project.py
 ```
 
+**Don't point at `C:\inetpub\wwwroot\<Instance>` itself** — that pulls in stock Acumatica `App_Code/`, sample folders, and any other unpacked customization on the same instance, polluting the catalog. The right paths are usually:
+
+- `C:\inetpub\wwwroot\<Instance>\CstSrc\<YourCustomizationProjectName>\` (when you "Edit project items as text" inside Acumatica), or
+- `C:\Projects\<YourCustomization>\` (when you maintain it as a standalone Visual Studio project)
+
+The walker auto-skips common Acumatica wwwroot folders (`Bin`, `App_Data`, `App_Code`, `Pages`, `Frames`, `CstPublished`, `WebSiteCache`, `WebSiteValidation`) case-insensitively, so accidentally rooting one level too high is annoying but not catastrophic.
+
 This walks every `.cs` file and builds a structured catalog:
 - DACs (anything implementing `IBqlTable`) with their `public virtual` fields and attributes
 - DAC extensions (`PXCacheExtension<T>`) with the target DAC and added fields
