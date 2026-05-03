@@ -68,6 +68,8 @@ Environment variables (in `.env`):
 
 ## MCP tools
 
+**Doc tools** (always available):
+
 | Tool                | Purpose                                                       |
 |---------------------|---------------------------------------------------------------|
 | `search_docs`       | Hybrid BM25 + dense + reranked search, filterable by area/doc_type |
@@ -75,7 +77,38 @@ Environment variables (in `.env`):
 | `get_section`       | Fetch the full text of one section by source + title           |
 | `list_doc_sources`  | Enumerate every indexed PDF and its sections                   |
 
+**Project tools** (require `ACUBUDDY_PROJECT_ROOT`):
+
+| Tool                    | Purpose                                                    |
+|-------------------------|------------------------------------------------------------|
+| `reindex_project`       | Rebuild the structured catalog from project source         |
+| `find_dac`              | Look up a DAC or DAC extension by name (fuzzy by default)  |
+| `list_dac_fields`       | Enumerate every field on a DAC, with type and attributes   |
+| `find_dac_extensions`   | All `PXCacheExtension<T>` for a given DAC                  |
+| `find_graph_extensions` | All `PXGraphExtension<T>` for a given graph                |
+| `find_event_handlers`   | All event handlers on a DAC, modern + legacy styles        |
+| `search_project`        | Substring search over project source (with file-glob)      |
+| `read_project_file`     | Read a project file by relative path, optional line range  |
+
 The model can call these multiple times per turn with different filters — that's the main reliability win over single-shot RAG.
+
+## Project awareness (Phase 2)
+
+Point AcuBuddy at the source folder of your customization project (where the Customization Project Editor extracts `.cs` files):
+
+```powershell
+$env:ACUBUDDY_PROJECT_ROOT = "C:\path\to\Your.Customization\Source"
+python index_project.py
+```
+
+This walks every `.cs` file and builds a structured catalog:
+- DACs (anything implementing `IBqlTable`) with their `public virtual` fields and attributes
+- DAC extensions (`PXCacheExtension<T>`) with the target DAC and added fields
+- Graphs (`PXGraph<...>`) with their primary DAC if declared
+- Graph extensions (`PXGraphExtension<T>`) with the target graph
+- Event handlers in both modern (`Events.RowSelected<DAC>`) and legacy (`DAC_Field_Kind`) styles
+
+The catalog is written to `chroma_db/project_catalog.json`. Rebuild after editing your project (or call `reindex_project` from the model). The catalog covers the "list all X" / "find all extensions of Y" questions that vector search misses.
 
 ## Wiring into other clients
 
