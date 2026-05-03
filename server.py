@@ -31,6 +31,7 @@ ENV_FILE = Path(__file__).parent / ".env"
 load_dotenv(dotenv_path=ENV_FILE)
 
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 INDEX_DIR = os.path.join(os.path.dirname(__file__), "chroma_db")
 SEARCH_K = int(os.getenv("ACUBUDDY_SEARCH_K", "5"))
@@ -126,7 +127,7 @@ async def _stream_deepseek(api_messages: list[dict], temperature: float, model_i
         "Content-Type": "application/json",
     }
     payload = {
-        "model": "deepseek-chat",
+        "model": DEEPSEEK_MODEL,
         "messages": api_messages,
         "temperature": temperature,
         "max_tokens": 8192,
@@ -187,7 +188,7 @@ async def _call_deepseek_async(api_messages: list[dict], temperature: float) -> 
         "Content-Type": "application/json",
     }
     payload = {
-        "model": "deepseek-chat",
+        "model": DEEPSEEK_MODEL,
         "messages": api_messages,
         "temperature": temperature,
         "max_tokens": 8192,
