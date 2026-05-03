@@ -23,7 +23,8 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from typing import Any
 
 from acu_buddy.rag import load_index, search
 
@@ -59,15 +60,18 @@ app.add_middleware(
 
 class ChatMessage(BaseModel):
     role: str
-    content: str | None = None
+    content: Any = None
+    tool_calls: Any = None
+    tool_call_id: str | None = None
+    name: str | None = None
 
 
 class ChatRequest(BaseModel):
     model: str = MODEL_ID
-    messages: list[ChatMessage]
+    messages: list[dict] = Field(default_factory=list)
     temperature: float = 0.7
     stream: bool = False
-    tools: list[dict] | None = None
+    tools: Any = None
 
 
 def _get_vecstore():
@@ -257,7 +261,7 @@ async def list_models():
 
 @app.post("/v1/chat/completions")
 async def chat_completions(body: ChatRequest):
-    messages = [m.model_dump() for m in body.messages]
+    messages = body.messages
 
     api_messages, user_query = await _inject_context(messages)
 
