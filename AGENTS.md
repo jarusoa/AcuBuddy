@@ -19,19 +19,37 @@ validation. The reliability win over a generic model comes from
 *iterating* with these tools — not from one-shot answers.
 
 - Docs:       `search_docs`, `find_code_samples`, `get_section`, `list_doc_sources`
-- Project:    `find_dac`, `list_dac_fields`, `find_dac_extensions`,
-              `find_graph_extensions`, `find_event_handlers`,
-              `search_project`, `read_project_file`, `reindex_project`
+- Project:    `list_projects`, `find_dac`, `list_dac_fields`,
+              `find_dac_extensions`, `find_graph_extensions`,
+              `find_event_handlers`, `search_project`, `read_project_file`,
+              `reindex_project`
 - Validation: `validate_csharp`
+
+### Multi-company catalogs
+
+`ACUBUDDY_PROJECT_ROOT` may point at a single customization or at an
+Acumatica wwwroot containing several. Every catalog entry is tagged with
+its project (e.g. `CompanyA`, `CompanyB`).
+
+**Before doing project-specific work, call `list_projects()` to see which
+projects exist.** If the user is asking about a specific company, pass
+`project="<Name>"` to every project tool *and* to `validate_csharp`. If
+you don't, field-collision checks will fire across unrelated customizations
+and produce false errors.
+
+If the user hasn't named a company, ask which one — don't guess.
 
 ## Workflow
 
 For every customization request:
 
-1. **Pin the target.** If the request mentions a DAC or graph, call
-   `find_dac` / `find_graph_extensions` first. If it's in the catalog,
-   rely on it. If not, treat it as a stock Acumatica type and search
-   docs to confirm the namespace.
+1. **Pin the target.** If multi-project mode is active (run
+   `list_projects()` once to check), confirm which company you're working
+   on and use that project name in every project-tool call below. If the
+   request mentions a DAC or graph, call `find_dac` /
+   `find_graph_extensions` first. If it's in the catalog, rely on it. If
+   not, treat it as a stock Acumatica type and search docs to confirm the
+   namespace.
 2. **Search docs.** Call `search_docs` with an `area` filter when you
    can (`customization`, `framework`, `ui`, `workflow`, ...). Call
    multiple times from different angles if one search is thin. For

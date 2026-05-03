@@ -70,11 +70,12 @@ Environment variables (in `.env`):
 | `get_section`       | Fetch the full text of one section by source + title           |
 | `list_doc_sources`  | Enumerate every indexed PDF and its sections                   |
 
-**Project tools** (require `ACUBUDDY_PROJECT_ROOT`):
+**Project tools** (require `ACUBUDDY_PROJECT_ROOT`). Most accept an optional `project=` filter to scope to a single customization project when the root spans multiple companies (see "Multi-company mode" below):
 
 | Tool                    | Purpose                                                    |
 |-------------------------|------------------------------------------------------------|
 | `reindex_project`       | Rebuild the structured catalog from project source         |
+| `list_projects`         | Enumerate detected customization projects with counts      |
 | `find_dac`              | Look up a DAC or DAC extension by name (fuzzy by default)  |
 | `list_dac_fields`       | Enumerate every field on a DAC, with type and attributes   |
 | `find_dac_extensions`   | All `PXCacheExtension<T>` for a given DAC                  |
@@ -93,19 +94,44 @@ The model can call these multiple times per turn with different filters — that
 
 ## Project awareness
 
-Point AcuBuddy at the source folder of your customization project (where the Customization Project Editor extracts `.cs` files):
+Point AcuBuddy at the source folder where your customization `.cs` files live:
 
 ```powershell
 $env:ACUBUDDY_PROJECT_ROOT = "C:\path\to\Your.Customization\Source"
 python index_project.py
 ```
 
-**Don't point at `C:\inetpub\wwwroot\<Instance>` itself** — that pulls in stock Acumatica `App_Code/`, sample folders, and any other unpacked customization on the same instance, polluting the catalog. The right paths are usually:
+Common roots:
 
-- `C:\inetpub\wwwroot\<Instance>\CstSrc\<YourCustomizationProjectName>\` (when you "Edit project items as text" inside Acumatica), or
-- `C:\Projects\<YourCustomization>\` (when you maintain it as a standalone Visual Studio project)
+- A single customization, unpacked: `C:\inetpub\wwwroot\<Instance>\CstSrc\<ProjectName>\`
+- A single customization, standalone VS project: `C:\Projects\<YourCustomization>\`
+- **Multiple customizations on one Acumatica instance**: `C:\inetpub\wwwroot\<Instance>\` (the whole wwwroot — see below)
 
-The walker auto-skips common Acumatica wwwroot folders (`Bin`, `App_Data`, `App_Code`, `Pages`, `Frames`, `CstPublished`, `WebSiteCache`, `WebSiteValidation`) case-insensitively, so accidentally rooting one level too high is annoying but not catastrophic.
+Every `.cs` file is auto-tagged with its **project**:
+
+1. The closest enclosing folder containing a `.csproj`, **or**
+2. If the file lives under a `CstSrc` folder, the next directory below it (the Acumatica convention for unpacked customizations), **or**
+3. The first path component below the root.
+
+The walker skips obviously-not-source folders (`Bin`, `obj`, `App_Data`, `App_Code`, `WebSiteCache`, `WebSiteValidation`, `CstPublished`, `node_modules`, `packages`, etc.) case-insensitively.
+
+### Multi-company mode
+
+If you manage multiple customizations on one Acumatica instance, point `ACUBUDDY_PROJECT_ROOT` at the wwwroot itself. AcuBuddy tags every entry by project (each `CstSrc/<Name>/` becomes its own project) and you scope queries via the `project=` filter on the tools:
+
+```
+list_projects()
+  → [{project: "CompanyA", dacs: 12, graphs: 4, events: 31}, ...]
+
+find_dac_extensions("ARInvoice", project="CompanyA")
+  → only CompanyA's extensions on ARInvoice
+
+validate_csharp(code, project="CompanyA")
+  → field-collision checks scoped to CompanyA, so adding UsrFoo for
+    CompanyA won't false-error against CompanyB having the same field
+```
+
+When working on a specific company, **always pass `project=`** to `validate_csharp` and the find-tools — otherwise you'll get noisy false collisions across unrelated customizations. The model is told this in `AGENTS.md`.
 
 This walks every `.cs` file and builds a structured catalog:
 - DACs (anything implementing `IBqlTable`) with their `public virtual` fields and attributes

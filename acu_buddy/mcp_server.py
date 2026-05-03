@@ -108,6 +108,7 @@ def _dac_to_dict(d) -> dict:
         "name": d.name,
         "kind": d.kind,
         "extends": d.extends,
+        "project": d.project,
         "file": d.file,
         "line": d.line,
         "field_count": len(d.fields),
@@ -116,6 +117,12 @@ def _dac_to_dict(d) -> dict:
 
 def _event_to_dict(e) -> dict:
     return asdict(e)
+
+
+def _matches_project(item_project: str, wanted: Optional[str]) -> bool:
+    if not wanted:
+        return True
+    return item_project.lower() == wanted.lower()
 
 
 def _result_payload(r) -> dict:
@@ -249,35 +256,74 @@ def reindex_project() -> dict:
 
 
 @mcp.tool()
-def find_dac(name: str, fuzzy: bool = True) -> list[dict]:
+def list_projects() -> list[dict]:
+    """Enumerate the customization projects (companies) detected under
+    ACUBUDDY_PROJECT_ROOT, with counts.
+
+    A "project" is auto-derived per file: the closest enclosing folder
+    containing a .csproj, or — if the file lives under `CstSrc/<X>/...` —
+    the `<X>` folder name. Use the values returned here as the `project`
+    argument to other tools to scope queries to one company.
+
+    Returns: list of {project, dacs, graphs, events}.
+    """
+    cat = _get_catalog()
+    counts: dict[str, dict] = {}
+    for d in cat.dacs:
+        counts.setdefault(d.project, {"project": d.project, "dacs": 0, "graphs": 0, "events": 0})
+        counts[d.project]["dacs"] += 1
+    for g in cat.graphs:
+        counts.setdefault(g.project, {"project": g.project, "dacs": 0, "graphs": 0, "events": 0})
+        counts[g.project]["graphs"] += 1
+    for e in cat.events:
+        counts.setdefault(e.project, {"project": e.project, "dacs": 0, "graphs": 0, "events": 0})
+        counts[e.project]["events"] += 1
+    return sorted(counts.values(), key=lambda r: r["project"])
+
+
+@mcp.tool()
+def find_dac(
+    name: str,
+    fuzzy: bool = True,
+    project: Optional[str] = None,
+) -> list[dict]:
     """Look up a DAC or DAC extension by class name (case-insensitive).
 
     Returns matching DACs/extensions with their file location and field count.
     If `fuzzy` is true and no exact match, returns close matches by name.
-    Use list_dac_fields(name) to enumerate fields on a specific DAC.
+    Pass `project` (case-insensitive) to scope to a single customization
+    project — useful when ACUBUDDY_PROJECT_ROOT spans multiple companies.
+    Use `list_projects()` to discover available project names.
     """
     cat = _get_catalog()
     needle = name.lower()
-    exact = [d for d in cat.dacs if d.name.lower() == needle]
+    pool = [d for d in cat.dacs if _matches_project(d.project, project)]
+    exact = [d for d in pool if d.name.lower() == needle]
     if exact or not fuzzy:
         return [_dac_to_dict(d) for d in exact]
 
-    all_names = [d.name for d in cat.dacs]
+    all_names = [d.name for d in pool]
     close = difflib.get_close_matches(name, all_names, n=10, cutoff=0.6)
-    contains = [d for d in cat.dacs if needle in d.name.lower() and d.name not in close]
-    matched = [d for d in cat.dacs if d.name in close] + contains[:10]
+    contains = [d for d in pool if needle in d.name.lower() and d.name not in close]
+    matched = [d for d in pool if d.name in close] + contains[:10]
     return [_dac_to_dict(d) for d in matched]
 
 
 @mcp.tool()
-def list_dac_fields(dac_name: str) -> dict:
+def list_dac_fields(dac_name: str, project: Optional[str] = None) -> dict:
     """Enumerate every `public virtual` field on a DAC or DAC extension.
 
     Returns each field's type, attributes, and source line. This is the
     exhaustive answer (vector search misses fields outside the top-k chunks).
+    Pass `project` to scope to one customization project when multiple
+    companies share a DAC name.
     """
     cat = _get_catalog()
-    matches = [d for d in cat.dacs if d.name.lower() == dac_name.lower()]
+    matches = [
+        d
+        for d in cat.dacs
+        if d.name.lower() == dac_name.lower() and _matches_project(d.project, project)
+    ]
     if not matches:
         return {"dac": dac_name, "found": False, "fields": []}
     out_fields = []
@@ -291,6 +337,7 @@ def list_dac_fields(dac_name: str) -> dict:
                     "in_class": d.name,
                     "kind": d.kind,
                     "extends": d.extends,
+                    "project": d.project,
                     "file": d.file,
                     "line": f.line,
                 }
@@ -300,41 +347,51 @@ def list_dac_fields(dac_name: str) -> dict:
         "found": True,
         "kind": matches[0].kind,
         "extends": matches[0].extends,
+        "project": matches[0].project,
         "fields": out_fields,
     }
 
 
 @mcp.tool()
-def find_dac_extensions(dac_name: str) -> list[dict]:
+def find_dac_extensions(dac_name: str, project: Optional[str] = None) -> list[dict]:
     """List every PXCacheExtension targeting a given DAC.
 
     Use this to answer "what extensions exist on ARInvoice?" — vector search
-    can return ~5 fuzzy matches; this returns all of them.
+    can return ~5 fuzzy matches; this returns all of them. Pass `project`
+    to restrict to one customization project.
     """
     cat = _get_catalog()
     needle = dac_name.lower()
     matches = [
         d
         for d in cat.dacs
-        if d.kind == "dac_extension" and d.extends and d.extends.split(".")[-1].lower() == needle
+        if d.kind == "dac_extension"
+        and d.extends
+        and d.extends.split(".")[-1].lower() == needle
+        and _matches_project(d.project, project)
     ]
     return [_dac_to_dict(d) for d in matches]
 
 
 @mcp.tool()
-def find_graph_extensions(graph_name: str) -> list[dict]:
-    """List every PXGraphExtension targeting a given graph (e.g. ARInvoiceEntry)."""
+def find_graph_extensions(graph_name: str, project: Optional[str] = None) -> list[dict]:
+    """List every PXGraphExtension targeting a given graph (e.g. ARInvoiceEntry).
+    Pass `project` to restrict to one customization project."""
     cat = _get_catalog()
     needle = graph_name.lower()
     matches = [
         g
         for g in cat.graphs
-        if g.kind == "graph_extension" and g.extends and g.extends.split(".")[-1].lower() == needle
+        if g.kind == "graph_extension"
+        and g.extends
+        and g.extends.split(".")[-1].lower() == needle
+        and _matches_project(g.project, project)
     ]
     return [
         {
             "name": g.name,
             "extends": g.extends,
+            "project": g.project,
             "file": g.file,
             "line": g.line,
         }
@@ -347,9 +404,11 @@ def find_event_handlers(
     target_dac: str,
     kind: Optional[str] = None,
     field: Optional[str] = None,
+    project: Optional[str] = None,
 ) -> list[dict]:
     """List event handlers that target a DAC, optionally filtered by event kind
-    (RowSelected/FieldUpdated/RowPersisting/...) and/or field name.
+    (RowSelected/FieldUpdated/RowPersisting/...) and/or field name. Pass
+    `project` to restrict to one customization project.
 
     Covers both modern (Events.RowSelected<DAC>) and legacy (DAC_Field_Kind)
     handler styles in one call.
@@ -363,6 +422,8 @@ def find_event_handlers(
         if kind and e.kind.lower() != kind.lower():
             continue
         if field and (e.target_field or "").lower() != field.lower():
+            continue
+        if not _matches_project(e.project, project):
             continue
         out.append(_event_to_dict(e))
     return out
@@ -395,7 +456,7 @@ def read_project_file(
 
 
 @mcp.tool()
-def validate_csharp(code: str) -> dict:
+def validate_csharp(code: str, project: Optional[str] = None) -> dict:
     """Static-validate generated C# against the project catalog.
 
     Run this on every code block you produce *before* showing it to the user.
@@ -407,6 +468,12 @@ def validate_csharp(code: str) -> dict:
       - warnings: class-name collisions with existing project classes.
       - notes:    references to DACs/graphs not in the catalog (might be
                   stock Acumatica types — verify the namespace).
+
+    Pass `project` (case-insensitive) to scope the catalog to a single
+    customization project. Required when ACUBUDDY_PROJECT_ROOT spans
+    multiple companies and you're working on one of them — otherwise
+    field collisions across unrelated projects will produce false errors.
+    Use `list_projects()` to discover available project names.
 
     If errors are present, fix them and re-validate. If only notes remain,
     you're likely fine — just sanity-check the unknown targets.
@@ -421,7 +488,7 @@ def validate_csharp(code: str) -> dict:
         catalog = _get_catalog()
     except RuntimeError:
         pass
-    issues = _run_validate(code, catalog)
+    issues = _run_validate(code, catalog, project=project)
     out = _summarize_issues(issues)
     if catalog is None:
         out["summary"] = "no project catalog loaded — limited checks. " + out["summary"]

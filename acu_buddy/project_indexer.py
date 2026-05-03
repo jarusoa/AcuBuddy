@@ -34,6 +34,12 @@ CATALOG_FILENAME = "project_catalog.json"
 
 # Comparison is case-insensitive (see _is_excluded_dir) so Windows folders
 # like "Bin" or "App_Data" match these lowercase names.
+#
+# Note: only directory names that NEVER legitimately appear inside a user's
+# customization source. We deliberately do NOT exclude "Pages" or "Frames",
+# because those are common folder names some devs use for organising their
+# own customizations. Multi-company users who point at wwwroot just get a
+# slightly larger catalog, which is fine — entries are tagged by project.
 EXCLUDE_DIRS = {
     # Build / VCS / dependency caches
     "obj",
@@ -42,19 +48,56 @@ EXCLUDE_DIRS = {
     ".vs",
     "node_modules",
     "packages",
-    # Acumatica wwwroot folders that are not user customization source
+    # ASP.NET / Acumatica wwwroot infrastructure that is never user source
     "app_data",
     "app_code",
     "websitecache",
     "websitevalidation",
     "cstpublished",
-    "frames",
-    "pages",  # stock Acumatica pages live here; user customization pages live in CstSrc
 }
 
 
 def _is_excluded_dir(name: str) -> bool:
     return name.lower() in EXCLUDE_DIRS
+
+
+def _resolve_project(file_path: Path, root: Path) -> str:
+    """Identify which 'project' a given .cs file belongs to.
+
+    Walks up from the file's directory toward `root`, picking the most
+    specific project marker:
+      1. The closest directory containing a .csproj file → use its name.
+      2. A directory whose parent is named `CstSrc` (case-insensitive) →
+         use the directory name (this is the Acumatica convention for
+         unpacked customization sources).
+      3. Fallback: the first path component below `root`, or the root's
+         own basename if the file lives directly in `root`.
+    """
+    file_path = file_path.resolve()
+    root = root.resolve()
+
+    cur = file_path.parent
+    while True:
+        try:
+            for entry in cur.iterdir():
+                if entry.is_file() and entry.suffix.lower() == ".csproj":
+                    return cur.name
+        except OSError:
+            pass
+        if cur != root and cur.parent.name.lower() == "cstsrc":
+            return cur.name
+        if cur == root or cur == cur.parent:
+            break
+        cur = cur.parent
+
+    try:
+        rel = file_path.relative_to(root)
+    except ValueError:
+        return "(unknown)"
+    parts = rel.parts[:-1]
+    if parts:
+        return parts[0]
+    return root.name or "(root)"
 
 EVENT_FIELD_KINDS = (
     "FieldSelecting",
@@ -132,6 +175,7 @@ class DacInfo:
     fields: list[FieldInfo] = field(default_factory=list)
     file: str = ""
     line: int = 0
+    project: str = ""
 
 
 @dataclass
@@ -142,6 +186,7 @@ class GraphInfo:
     primary_dac: str | None
     file: str
     line: int
+    project: str = ""
 
 
 @dataclass
@@ -153,6 +198,7 @@ class EventInfo:
     style: str  # "modern" | "legacy"
     file: str
     line: int
+    project: str = ""
 
 
 @dataclass
@@ -172,19 +218,48 @@ class ProjectCatalog:
 
     @classmethod
     def from_dict(cls, data: dict) -> "ProjectCatalog":
+        def _take(known_fields, raw):
+            return {k: v for k, v in raw.items() if k in known_fields}
+
+        dac_fields = {"name", "kind", "extends", "fields", "file", "line", "project"}
+        graph_fields = {"name", "kind", "extends", "primary_dac", "file", "line", "project"}
+        event_fields = {
+            "enclosing_class",
+            "kind",
+            "target_dac",
+            "target_field",
+            "style",
+            "file",
+            "line",
+            "project",
+        }
+
         return cls(
             project_root=data["project_root"],
             built_at=data["built_at"],
             file_count=data["file_count"],
             dacs=[
                 DacInfo(
-                    **{**d, "fields": [FieldInfo(**f) for f in d.get("fields", [])]}
+                    **{
+                        **_take(dac_fields, d),
+                        "fields": [FieldInfo(**f) for f in d.get("fields", [])],
+                    }
                 )
                 for d in data.get("dacs", [])
             ],
-            graphs=[GraphInfo(**g) for g in data.get("graphs", [])],
-            events=[EventInfo(**e) for e in data.get("events", [])],
+            graphs=[GraphInfo(**_take(graph_fields, g)) for g in data.get("graphs", [])],
+            events=[EventInfo(**_take(event_fields, e)) for e in data.get("events", [])],
         )
+
+    def projects(self) -> list[str]:
+        names = set()
+        for d in self.dacs:
+            names.add(d.project)
+        for g in self.graphs:
+            names.add(g.project)
+        for e in self.events:
+            names.add(e.project)
+        return sorted(n for n in names if n)
 
 
 def _split_top_level(s: str, sep: str = ",") -> list[str]:
@@ -457,13 +532,32 @@ def parse_text(
     return dacs, graphs, events
 
 
-def parse_file(path: str, project_root: str) -> tuple[list[DacInfo], list[GraphInfo], list[EventInfo]]:
+def parse_file(
+    path: str,
+    project_root: str,
+    project_cache: dict[str, str] | None = None,
+) -> tuple[list[DacInfo], list[GraphInfo], list[EventInfo]]:
     try:
         text = Path(path).read_text(encoding="utf-8", errors="replace")
     except OSError:
         return [], [], []
     rel = os.path.relpath(path, project_root)
-    return parse_text(text, file_label=rel)
+
+    cache = project_cache if project_cache is not None else {}
+    dir_key = os.path.dirname(path)
+    project = cache.get(dir_key)
+    if project is None:
+        project = _resolve_project(Path(path), Path(project_root))
+        cache[dir_key] = project
+
+    dacs, graphs, events = parse_text(text, file_label=rel)
+    for d in dacs:
+        d.project = project
+    for g in graphs:
+        g.project = project
+    for e in events:
+        e.project = project
+    return dacs, graphs, events
 
 
 def build_catalog(project_root: str) -> ProjectCatalog:
@@ -475,6 +569,7 @@ def build_catalog(project_root: str) -> ProjectCatalog:
     graphs: list[GraphInfo] = []
     events: list[EventInfo] = []
     file_count = 0
+    project_cache: dict[str, str] = {}
 
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if not _is_excluded_dir(d)]
@@ -483,7 +578,7 @@ def build_catalog(project_root: str) -> ProjectCatalog:
                 continue
             fpath = os.path.join(dirpath, fname)
             file_count += 1
-            d, g, e = parse_file(fpath, root)
+            d, g, e = parse_file(fpath, root, project_cache)
             dacs.extend(d)
             graphs.extend(g)
             events.extend(e)

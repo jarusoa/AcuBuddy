@@ -36,10 +36,10 @@ def _short(name: Optional[str]) -> Optional[str]:
     return name.split(".")[-1].strip()
 
 
-def _collect_extension_fields(catalog: ProjectCatalog) -> dict[str, set[str]]:
-    """Map: target_dac_short_lower -> set of field names (lowercased) added by extensions in the catalog."""
+def _collect_extension_fields(dacs) -> dict[str, set[str]]:
+    """Map: target_dac_short_lower -> set of field names (lowercased) added by extensions."""
     out: dict[str, set[str]] = {}
-    for d in catalog.dacs:
+    for d in dacs:
         if d.kind != "dac_extension" or not d.extends:
             continue
         tgt = (_short(d.extends) or "").lower()
@@ -49,9 +49,34 @@ def _collect_extension_fields(catalog: ProjectCatalog) -> dict[str, set[str]]:
     return out
 
 
-def validate(code: str, catalog: Optional[ProjectCatalog]) -> list[Issue]:
-    """Run static checks on `code`. If `catalog` is None, only intra-input
-    checks run (no cross-reference). Returns ordered list of issues."""
+def _scope_catalog(catalog: ProjectCatalog, project: Optional[str]) -> ProjectCatalog:
+    """Return a catalog filtered to a single project (or the original if project is None)."""
+    if not project:
+        return catalog
+    needle = project.lower()
+    return ProjectCatalog(
+        project_root=catalog.project_root,
+        built_at=catalog.built_at,
+        file_count=catalog.file_count,
+        dacs=[d for d in catalog.dacs if d.project.lower() == needle],
+        graphs=[g for g in catalog.graphs if g.project.lower() == needle],
+        events=[e for e in catalog.events if e.project.lower() == needle],
+    )
+
+
+def validate(
+    code: str,
+    catalog: Optional[ProjectCatalog],
+    project: Optional[str] = None,
+) -> list[Issue]:
+    """Run static checks on `code`.
+
+    If `catalog` is None, only intra-input checks run (no cross-reference).
+    If `project` is provided, the catalog is scoped to that customization
+    project before checking — so adding `UsrFoo` to CompanyA's `ARInvoice`
+    won't conflict with CompanyB's `ARInvoice` extension.
+    Returns ordered list of issues.
+    """
 
     issues: list[Issue] = []
     in_dacs, in_graphs, in_events = parse_text(code, file_label="<input>")
@@ -71,9 +96,11 @@ def validate(code: str, catalog: Optional[ProjectCatalog]) -> list[Issue]:
             )
         return issues
 
+    catalog = _scope_catalog(catalog, project)
+
     by_dac = {d.name: d for d in catalog.dacs}
     by_graph = {g.name: g for g in catalog.graphs}
-    ext_fields_by_target = _collect_extension_fields(catalog)
+    ext_fields_by_target = _collect_extension_fields(catalog.dacs)
 
     # 1. Class name collisions
     for cls_name in new_class_names:
