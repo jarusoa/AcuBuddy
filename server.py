@@ -41,11 +41,9 @@ _vecstore = None
 
 SYSTEM_PROMPT = (
     "You are an Acumatica ERP development assistant. "
-    "Use ONLY the provided context from Acumatica documentation to answer the user's question. "
-    "If the context does not contain enough information, say you don't know and suggest the user consult "
-    "the official Acumatica documentation. "
-    "Include relevant code examples when available. "
-    "Be concise and accurate."
+    "Use the provided documentation alongside your tools to give accurate answers. "
+    "If the docs do not cover something, use your own knowledge. "
+    "Be concise and accurate. Include code examples when available."
 )
 
 app = FastAPI(title="AcuBuddy", version="1.0.0")
@@ -61,7 +59,7 @@ app.add_middleware(
 
 class ChatMessage(BaseModel):
     role: str
-    content: str
+    content: str | None = None
 
 
 class ChatRequest(BaseModel):
@@ -86,7 +84,6 @@ def _get_vecstore():
 
 
 async def _build_context(query: str) -> str:
-    """Search vector DB in a thread to avoid blocking the event loop."""
     vecstore = _get_vecstore()
     chunks = await asyncio.to_thread(search, vecstore, query, k=SEARCH_K)
     if not chunks:
@@ -94,16 +91,6 @@ async def _build_context(query: str) -> str:
     return "\n\n---\n\n".join(
         f"[Source {i + 1}]\n{chunk}" for i, chunk in enumerate(chunks)
     )
-
-
-SYSTEM_PROMPT = (
-    "You are an Acumatica ERP development assistant. "
-    "Below is relevant Acumatica documentation that may help answer the user's question. "
-    "Use the documentation alongside your tools to provide accurate answers. "
-    "If the documentation does not cover something, say so and use your general knowledge. "
-    "Include relevant code examples when available. "
-    "Be concise and accurate."
-)
 
 
 async def _inject_context(messages: list[dict]) -> tuple[list[dict], str]:
@@ -128,15 +115,23 @@ async def _inject_context(messages: list[dict]) -> tuple[list[dict], str]:
         )
         if api_messages and api_messages[0].get("role") == "system":
             first = dict(api_messages[0])
-            first["content"] = rag_note + "\n\n" + first["content"]
+            first["content"] = rag_note + "\n\n" + str(first.get("content", ""))
             api_messages[0] = first
         else:
-            api_messages.insert(0, {"role": "system", "content": SYSTEM_PROMPT + rag_note})
+            api_messages.insert(0, {
+                "role": "system",
+                "content": SYSTEM_PROMPT + rag_note,
+            })
 
     return api_messages, user_query
 
 
-async def _stream_deepseek(api_messages: list[dict], temperature: float, model_id: str, tools: list[dict] | None = None):
+async def _stream_deepseek(
+    api_messages: list[dict],
+    temperature: float,
+    model_id: str,
+    tools: list[dict] | None = None,
+):
     headers = {
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
         "Content-Type": "application/json",
@@ -199,7 +194,11 @@ async def _stream_deepseek(api_messages: list[dict], temperature: float, model_i
                 yield f"data: {json.dumps(chunk)}\n\n"
 
 
-async def _call_deepseek_async(api_messages: list[dict], temperature: float, tools: list[dict] | None = None) -> dict:
+async def _call_deepseek_async(
+    api_messages: list[dict],
+    temperature: float,
+    tools: list[dict] | None = None,
+) -> dict:
     headers = {
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
         "Content-Type": "application/json",
@@ -289,7 +288,9 @@ async def chat_completions(body: ChatRequest):
         )
 
     try:
-        deepseek_resp = await _call_deepseek_async(api_messages, body.temperature, body.tools)
+        deepseek_resp = await _call_deepseek_async(
+            api_messages, body.temperature, body.tools
+        )
     except Exception as e:
         return JSONResponse(
             {"error": f"DeepSeek API error: {str(e)}"}, status_code=502
