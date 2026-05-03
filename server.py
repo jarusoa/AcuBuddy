@@ -16,6 +16,7 @@ import sys
 import threading
 import time
 import uuid
+from pathlib import Path
 
 import httpx
 from dotenv import load_dotenv
@@ -26,7 +27,8 @@ from pydantic import BaseModel
 
 from acu_buddy.rag import load_index, search
 
-load_dotenv()
+ENV_FILE = Path(__file__).parent / ".env"
+load_dotenv(dotenv_path=ENV_FILE)
 
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
