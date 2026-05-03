@@ -95,6 +95,16 @@ async def _build_context(query: str) -> str:
     )
 
 
+SYSTEM_PROMPT = (
+    "You are an Acumatica ERP development assistant. "
+    "Below is relevant Acumatica documentation that may help answer the user's question. "
+    "Use the documentation alongside your tools to provide accurate answers. "
+    "If the documentation does not cover something, say so and use your general knowledge. "
+    "Include relevant code examples when available. "
+    "Be concise and accurate."
+)
+
+
 async def _inject_context(messages: list[dict]) -> tuple[list[dict], str]:
     user_query = ""
     for msg in reversed(messages):
@@ -108,15 +118,19 @@ async def _inject_context(messages: list[dict]) -> tuple[list[dict], str]:
     except RuntimeError:
         pass
 
-    system_content = SYSTEM_PROMPT
-    if context:
-        system_content += (
-            f"\n\nRelevant Acumatica documentation:\n\n{context}"
-            "\n\nUse the documentation excerpts above to answer the user's question accurately."
-        )
+    api_messages = list(messages)
 
-    api_messages = [{"role": "system", "content": system_content}]
-    api_messages.extend(messages)
+    if context:
+        rag_note = (
+            f"\n\nRelevant Acumatica documentation:\n\n{context}"
+            "\n\nUse the documentation excerpts above when applicable."
+        )
+        if api_messages and api_messages[0].get("role") == "system":
+            first = dict(api_messages[0])
+            first["content"] = rag_note + "\n\n" + first["content"]
+            api_messages[0] = first
+        else:
+            api_messages.insert(0, {"role": "system", "content": SYSTEM_PROMPT + rag_note})
 
     return api_messages, user_query
 
