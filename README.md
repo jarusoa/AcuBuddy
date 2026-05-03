@@ -76,3 +76,71 @@ python build_index.py
 ## VS Code
 
 `Ctrl+Shift+B` (Run Build Task) starts the server using uvicorn with hot-reload. Or open Command Palette → "Tasks: Run Task" → "Start AcuBuddy Server".
+
+## MCP server (recommended)
+
+The same hybrid retrieval is also exposed as an MCP server, so any MCP-aware client (Claude Code, OpenCode, Continue, Cline, Cursor, …) can call the search tools directly. The model can issue **multiple searches per turn** with different filters — that's the main reliability win over the chat-completion proxy.
+
+Tools exposed:
+
+| Tool                | Purpose                                                       |
+|---------------------|---------------------------------------------------------------|
+| `search_docs`       | Hybrid BM25 + dense + reranked search, filterable by area/doc_type |
+| `find_code_samples` | Same, restricted to developer-focused guides                  |
+| `get_section`       | Fetch the full text of one section by source + title           |
+| `list_doc_sources`  | Enumerate every indexed PDF and its sections                   |
+
+Run it (stdio):
+```powershell
+python -m acu_buddy.mcp_server
+```
+
+### Wiring it into clients
+
+**Claude Code** — add to `.mcp.json` in the repo using AcuBuddy:
+```json
+{
+  "mcpServers": {
+    "acubuddy": {
+      "command": "python",
+      "args": ["-m", "acu_buddy.mcp_server"],
+      "cwd": "C:/path/to/AcuBuddy"
+    }
+  }
+}
+```
+
+**OpenCode** — extend the existing `opencode.json`:
+```json
+{
+  "mcp": {
+    "acubuddy": {
+      "type": "local",
+      "command": ["python", "-m", "acu_buddy.mcp_server"],
+      "cwd": "C:/path/to/AcuBuddy"
+    }
+  }
+}
+```
+
+**Continue (VS Code)** — in `~/.continue/config.yaml`:
+```yaml
+mcpServers:
+  - name: acubuddy
+    command: python
+    args: ["-m", "acu_buddy.mcp_server"]
+    cwd: C:/path/to/AcuBuddy
+```
+
+**Visual Studio (no native MCP)** — run OpenCode or Aider in a terminal pane next to VS, configured as above. The model sees the tools, edits files on disk, VS picks up the changes.
+
+### Environment variables (MCP server)
+
+| Variable                   | Default               | Description                                              |
+|----------------------------|-----------------------|----------------------------------------------------------|
+| `ACUBUDDY_INDEX_DIR`       | `./chroma_db`         | Where the hybrid index lives                             |
+| `ACUBUDDY_SEARCH_K`        | `5`                   | Default `k` for `search_docs`                            |
+| `ACUBUDDY_EMBEDDING_MODEL` | `BAAI/bge-large-en-v1.5` | Dense embedding model                                 |
+| `ACUBUDDY_RERANKER_MODEL`  | `BAAI/bge-reranker-base` | Cross-encoder for reranking                           |
+| `ACUBUDDY_USE_RERANKER`    | `1`                   | Set `0` to skip reranking (faster, lower quality)        |
+

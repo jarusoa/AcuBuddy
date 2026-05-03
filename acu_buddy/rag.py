@@ -449,3 +449,51 @@ def search(
     for (cid, content, meta), score in scored[:k]:
         results.append(SearchResult(content=content, metadata=meta, score=float(score)))
     return results
+
+
+def list_sources(index: HybridIndex) -> list[dict]:
+    """Aggregate metadata across the index. Returns one row per source file."""
+    by_source: dict[str, dict] = {}
+    for meta in index.metas:
+        name = meta.get("source_name") or "?"
+        row = by_source.setdefault(
+            name,
+            {
+                "source_name": name,
+                "doc_type": meta.get("doc_type", "?"),
+                "area": meta.get("area", "?"),
+                "sections": set(),
+                "chunks": 0,
+            },
+        )
+        row["chunks"] += 1
+        section = meta.get("section")
+        if section:
+            row["sections"].add(section)
+
+    rows = []
+    for row in by_source.values():
+        rows.append(
+            {
+                "source_name": row["source_name"],
+                "doc_type": row["doc_type"],
+                "area": row["area"],
+                "sections": sorted(row["sections"]),
+                "chunk_count": row["chunks"],
+            }
+        )
+    rows.sort(key=lambda r: r["source_name"])
+    return rows
+
+
+def get_section_text(index: HybridIndex, source_name: str, section: str) -> str | None:
+    """Concatenate all chunks for one (source_name, section) in chunk_id order."""
+    matches = [
+        (meta.get("chunk_id", ""), content)
+        for content, meta in zip(index.corpus, index.metas)
+        if meta.get("source_name") == source_name and meta.get("section") == section
+    ]
+    if not matches:
+        return None
+    matches.sort(key=lambda kv: kv[0])
+    return "\n".join(content for _, content in matches)
