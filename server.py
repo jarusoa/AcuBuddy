@@ -134,7 +134,8 @@ async def _inject_context(messages: list[dict]) -> tuple[list[dict], str]:
 
     if context:
         rag_note = (
-            f"\n\nRelevant Acumatica documentation:\n\n{context}"
+            f"{SYSTEM_PROMPT}\n\n"
+            f"Relevant Acumatica documentation:\n\n{context}"
             "\n\nUse the documentation excerpts above when applicable."
         )
         if api_messages and api_messages[0].get("role") == "system":
@@ -142,10 +143,7 @@ async def _inject_context(messages: list[dict]) -> tuple[list[dict], str]:
             first["content"] = rag_note + "\n\n" + str(first.get("content", ""))
             api_messages[0] = first
         else:
-            api_messages.insert(0, {
-                "role": "system",
-                "content": SYSTEM_PROMPT + rag_note,
-            })
+            api_messages.insert(0, {"role": "system", "content": rag_note})
 
     return api_messages, user_query
 
