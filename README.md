@@ -5,8 +5,8 @@ Acumatica ERP coding assistant. Hybrid retrieval (BM25 + dense + cross-encoder r
 ## How it works
 
 1. **Index** — Place Acumatica documentation (PDFs, `.txt`, `.md`, `.xml`, `.cs`, etc.) in `data/`, then run `build_index.py` to build a hybrid index: dense (BAAI/bge-large-en-v1.5 in Chroma) + sparse (BM25) + section-aware metadata.
-2. **Serve** — Start the MCP server (`python -m acu_buddy.mcp_server`). It exposes search tools over stdio.
-3. **Ask** — Point OpenCode (or another MCP client) at this folder. The model calls `search_docs`, `find_code_samples`, `get_section`, `list_doc_sources` as needed and answers with citations.
+2. **Catalog** (optional) — Point `ACUBUDDY_PROJECT_ROOT` at your customization project and run `index_project.py`. The structured catalog (DACs, graphs, events) backs the project-aware MCP tools.
+3. **Ask** — Run `opencode` (or another MCP-aware client) in this folder. The client auto-spawns the MCP server defined in `opencode.json` and exposes its 13 tools to the model. Answers cite source PDFs with page ranges.
 
 ## Quick start
 
@@ -36,11 +36,14 @@ The bundled `opencode.json` points OpenCode straight at DeepSeek and registers A
 An `opencode.json` is included. OpenCode auto-discovers it when you run `opencode` in this directory.
 
 The config:
-- Registers `deepseek-chat` (displayed as "DeepSeek V4 Pro") as the active model
+- Registers `deepseek-v4-pro` (DeepSeek V4 Pro) as the active model
 - Reads `DEEPSEEK_API_KEY` from your environment
 - Spawns `python -m acu_buddy.mcp_server` and exposes its tools to the model
+- Loads `AGENTS.md` for the agent's system instructions (advisory-only output; never edits project files; emits a structured "Code Recipe")
 
-When you ask an Acumatica question, the model decides whether to call `search_docs`, refines with filters (`area="customization"`, `doc_type="reference"`), and may call `get_section` to read a full section. Answers cite source PDFs with page ranges.
+When you ask an Acumatica question, the model decides whether to call `search_docs`, refines with filters (`area="customization"`, `doc_type="reference"`), and may call `get_section` to read a full section. For project-specific questions it uses `find_dac` / `list_dac_fields` / `find_graph_extensions` etc. Generated code goes through `validate_csharp` before being shown to you, in a Code Recipe block you paste into the Customization Project Editor.
+
+> Note: `deepseek-v4-pro` is the model id used in `opencode.json`. If DeepSeek's API rejects it, swap in the id from their pricing page (commonly `deepseek-chat`) — one-line edit.
 
 ## Configuration
 
@@ -88,7 +91,7 @@ Environment variables (in `.env`):
 
 The model can call these multiple times per turn with different filters — that's the main reliability win over single-shot RAG.
 
-## Project awareness (Phase 2)
+## Project awareness
 
 Point AcuBuddy at the source folder of your customization project (where the Customization Project Editor extracts `.cs` files):
 
@@ -106,7 +109,7 @@ This walks every `.cs` file and builds a structured catalog:
 
 The catalog is written to `chroma_db/project_catalog.json`. Rebuild after editing your project (or call `reindex_project` from the model). The catalog covers the "list all X" / "find all extensions of Y" questions that vector search misses.
 
-## Code validation (Phase 3)
+## Code validation
 
 `validate_csharp` runs static checks against the catalog before the user has to compile. The model is expected to call it on every code block it produces.
 
@@ -147,7 +150,7 @@ mcpServers:
     cwd: C:/path/to/AcuBuddy
 ```
 
-**Visual Studio (no native MCP)** — run OpenCode or Aider in a terminal pane next to VS, configured the same way. The model sees the tools, edits files on disk, VS picks up the changes.
+**Visual Studio (no native MCP)** — run OpenCode in a terminal pane next to VS, configured the same way. The model uses MCP tools to research and validate, then emits Code Recipes you paste into the Customization Project Editor (it never writes to your `.cs` / `.aspx` files directly — see `AGENTS.md`).
 
 ## Adding documentation
 
