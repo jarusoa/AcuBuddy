@@ -29,7 +29,7 @@ python build_index.py --clean
 opencode
 ```
 
-The bundled `opencode.json` points OpenCode straight at DeepSeek and registers AcuBuddy as an MCP server. OpenCode spawns the MCP server on startup and exposes its tools to the model.
+The bundled `opencode.json` points OpenCode straight at DeepSeek and registers AcuBuddy as an MCP server. OpenCode spawns the MCP server on startup and exposes its tools to the model. Project-level agent instructions live in `AGENTS.md` (auto-discovered by OpenCode and most MCP-aware clients) — they enforce the advisory-only "Code Recipe" output format so the model never edits your `.cs` / `.aspx` files directly.
 
 ## Optional: legacy proxy
 
