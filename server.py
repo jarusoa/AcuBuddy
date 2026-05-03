@@ -99,11 +99,12 @@ def _get_vecstore():
 
 async def _build_context(query: str) -> str:
     vecstore = _get_vecstore()
-    chunks = await asyncio.to_thread(search, vecstore, query, k=SEARCH_K)
-    if not chunks:
+    results = await asyncio.to_thread(search, vecstore, query, k=SEARCH_K)
+    if not results:
         return ""
     return "\n\n---\n\n".join(
-        f"[Source {i + 1}]\n{chunk}" for i, chunk in enumerate(chunks)
+        f"[Source {i + 1}: {r.citation()}]\n{r.content}"
+        for i, r in enumerate(results)
     )
 
 
