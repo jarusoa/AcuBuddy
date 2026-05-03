@@ -42,9 +42,16 @@ _vecstore = None
 
 SYSTEM_PROMPT = (
     "You are an Acumatica ERP development assistant. "
-    "Use the provided documentation alongside your tools to give accurate answers. "
-    "If the docs do not cover something, use your own knowledge. "
-    "Be concise and accurate. Include code examples when available."
+    "When you need context not already in this conversation, explore the codebase "
+    "to understand project structure, source files, and naming conventions. "
+    "Combine findings with Acumatica documentation to give precise answers. "
+    "CRITICAL: Never modify any source file directly. "
+    "Instead, output complete, copyable code blocks (full file content) "
+    "ready to paste into the Acumatica Customization Project Editor. "
+    "Review all class names, DAC names, graph names, and field names "
+    "against the existing codebase to avoid naming clashes. "
+    "Cite file paths and line ranges when referencing existing code. "
+    "Be concise and accurate."
 )
 
 app = FastAPI(title="AcuBuddy", version="1.0.0")
@@ -109,6 +116,19 @@ async def _inject_context(messages: list[dict]) -> tuple[list[dict], str]:
         context = await _build_context(user_query)
     except RuntimeError:
         pass
+
+    if context:
+        chunk_count = context.count("[Source ")
+        char_count = len(context)
+        est_tokens = char_count // 4
+        print(
+            f"\n[AcuBuddy] query: {user_query[:100]}",
+            f"\n[AcuBuddy] retrieved {chunk_count} chunks (~{est_tokens} tokens):",
+            file=sys.stderr,
+        )
+        for i, line in enumerate(context.split("\n"), 1):
+            if line.startswith("[Source"):
+                print(f"  {line[:120]}", file=sys.stderr)
 
     api_messages = list(messages)
 
