@@ -20,6 +20,9 @@ Project tools (require ACUBUDDY_PROJECT_ROOT):
     - search_project(query, file_glob?, max_hits?=50)
     - read_project_file(path, start_line?, end_line?)
 
+Validation tool:
+    - validate_csharp(code)         (catalog-aware static checks)
+
 The model can call these multiple times per turn — that's the whole point.
 """
 
@@ -49,6 +52,8 @@ from acu_buddy.rag import (
     load_index,
     search,
 )
+from acu_buddy.validator import summarize as _summarize_issues
+from acu_buddy.validator import validate as _run_validate
 
 INDEX_DIR = os.getenv(
     "ACUBUDDY_INDEX_DIR",
@@ -387,6 +392,40 @@ def read_project_file(
     """
     root = _require_project_root()
     return read_file_safely(root, path, start_line=start_line, end_line=end_line)
+
+
+@mcp.tool()
+def validate_csharp(code: str) -> dict:
+    """Static-validate generated C# against the project catalog.
+
+    Run this on every code block you produce *before* showing it to the user.
+    It catches the most common failure modes without needing to compile:
+
+      - errors:   field collisions on a DAC (you added a field that already
+                  exists), event handlers referencing fields that don't
+                  exist on a cataloged DAC.
+      - warnings: class-name collisions with existing project classes.
+      - notes:    references to DACs/graphs not in the catalog (might be
+                  stock Acumatica types — verify the namespace).
+
+    If errors are present, fix them and re-validate. If only notes remain,
+    you're likely fine — just sanity-check the unknown targets.
+
+    Returns: {ok, issue_counts, issues[{severity, kind, message, line, context}], summary}.
+
+    Note: this is a static check, not a real compile. Type mismatches,
+    syntax errors, and missing usings are not caught here.
+    """
+    catalog = None
+    try:
+        catalog = _get_catalog()
+    except RuntimeError:
+        pass
+    issues = _run_validate(code, catalog)
+    out = _summarize_issues(issues)
+    if catalog is None:
+        out["summary"] = "no project catalog loaded — limited checks. " + out["summary"]
+    return out
 
 
 def main() -> None:

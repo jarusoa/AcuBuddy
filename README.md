@@ -90,6 +90,12 @@ Environment variables (in `.env`):
 | `search_project`        | Substring search over project source (with file-glob)      |
 | `read_project_file`     | Read a project file by relative path, optional line range  |
 
+**Validation tool**:
+
+| Tool              | Purpose                                                          |
+|-------------------|------------------------------------------------------------------|
+| `validate_csharp` | Static checks against the catalog: field collisions, bad event-handler fields, class-name clashes, unknown targets |
+
 The model can call these multiple times per turn with different filters — that's the main reliability win over single-shot RAG.
 
 ## Project awareness (Phase 2)
@@ -109,6 +115,23 @@ This walks every `.cs` file and builds a structured catalog:
 - Event handlers in both modern (`Events.RowSelected<DAC>`) and legacy (`DAC_Field_Kind`) styles
 
 The catalog is written to `chroma_db/project_catalog.json`. Rebuild after editing your project (or call `reindex_project` from the model). The catalog covers the "list all X" / "find all extensions of Y" questions that vector search misses.
+
+## Code validation (Phase 3)
+
+`validate_csharp` runs static checks against the catalog before the user has to compile. The model is expected to call it on every code block it produces.
+
+What it catches:
+
+| Severity   | What                                                                    |
+|------------|-------------------------------------------------------------------------|
+| **error**  | Field collision: adding a field that already exists on the target DAC or any of its cataloged extensions |
+| **error**  | Event handler references a field that doesn't exist on a cataloged DAC  |
+| **warning**| Class-name clash with an existing project class                         |
+| **note**   | Reference to a DAC/graph not in the catalog (likely a stock Acumatica type — verify the namespace) |
+
+What it doesn't catch (yet): syntax errors, type mismatches, missing usings, attribute parameter validity. Those need a real compile. A future enhancement is to shell out to `dotnet build` against the user's Acumatica references when available.
+
+The model can use the result to self-correct: errors → fix and re-validate; only notes → likely fine, just verify unknown targets. The `valid_fields` list returned in `field_not_found` errors lets the model spot the right field directly without another tool call.
 
 ## Wiring into other clients
 

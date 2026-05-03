@@ -379,14 +379,10 @@ def _parse_events(body: str, body_offset: int, full_text: str, enclosing: str, f
     return events
 
 
-def parse_file(path: str, project_root: str) -> tuple[list[DacInfo], list[GraphInfo], list[EventInfo]]:
-    try:
-        text = Path(path).read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return [], [], []
-
-    rel = os.path.relpath(path, project_root)
-
+def parse_text(
+    text: str, file_label: str = "<input>"
+) -> tuple[list[DacInfo], list[GraphInfo], list[EventInfo]]:
+    """Parse C# source text. file_label populates the 'file' field on results."""
     dacs: list[DacInfo] = []
     graphs: list[GraphInfo] = []
     events: list[EventInfo] = []
@@ -417,7 +413,7 @@ def parse_file(path: str, project_root: str) -> tuple[list[DacInfo], list[GraphI
                     kind=kind,
                     extends=target,
                     fields=fields,
-                    file=rel,
+                    file=file_label,
                     line=cls_line,
                 )
             )
@@ -430,13 +426,22 @@ def parse_file(path: str, project_root: str) -> tuple[list[DacInfo], list[GraphI
                     kind=kind,
                     extends=extends,
                     primary_dac=primary,
-                    file=rel,
+                    file=file_label,
                     line=cls_line,
                 )
             )
-            events.extend(_parse_events(body, body_start, text, cls_name, rel))
+            events.extend(_parse_events(body, body_start, text, cls_name, file_label))
 
     return dacs, graphs, events
+
+
+def parse_file(path: str, project_root: str) -> tuple[list[DacInfo], list[GraphInfo], list[EventInfo]]:
+    try:
+        text = Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return [], [], []
+    rel = os.path.relpath(path, project_root)
+    return parse_text(text, file_label=rel)
 
 
 def build_catalog(project_root: str) -> ProjectCatalog:
