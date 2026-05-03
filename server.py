@@ -69,6 +69,7 @@ class ChatRequest(BaseModel):
     messages: list[ChatMessage]
     temperature: float = 0.7
     stream: bool = False
+    tools: list[dict] | None = None
 
 
 def _get_vecstore():
@@ -135,7 +136,7 @@ async def _inject_context(messages: list[dict]) -> tuple[list[dict], str]:
     return api_messages, user_query
 
 
-async def _stream_deepseek(api_messages: list[dict], temperature: float, model_id: str):
+async def _stream_deepseek(api_messages: list[dict], temperature: float, model_id: str, tools: list[dict] | None = None):
     headers = {
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
         "Content-Type": "application/json",
@@ -147,6 +148,8 @@ async def _stream_deepseek(api_messages: list[dict], temperature: float, model_i
         "max_tokens": 8192,
         "stream": True,
     }
+    if tools:
+        payload["tools"] = tools
 
     timeout = httpx.Timeout(120.0, connect=10.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
@@ -196,7 +199,7 @@ async def _stream_deepseek(api_messages: list[dict], temperature: float, model_i
                 yield f"data: {json.dumps(chunk)}\n\n"
 
 
-async def _call_deepseek_async(api_messages: list[dict], temperature: float) -> dict:
+async def _call_deepseek_async(api_messages: list[dict], temperature: float, tools: list[dict] | None = None) -> dict:
     headers = {
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
         "Content-Type": "application/json",
@@ -207,6 +210,8 @@ async def _call_deepseek_async(api_messages: list[dict], temperature: float) -> 
         "temperature": temperature,
         "max_tokens": 8192,
     }
+    if tools:
+        payload["tools"] = tools
 
     timeout = httpx.Timeout(120.0, connect=10.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
@@ -264,7 +269,7 @@ async def chat_completions(body: ChatRequest):
         async def event_stream():
             try:
                 async for chunk in _stream_deepseek(
-                    api_messages, body.temperature, MODEL_ID
+                    api_messages, body.temperature, MODEL_ID, body.tools
                 ):
                     yield chunk
             except Exception as e:
@@ -284,7 +289,7 @@ async def chat_completions(body: ChatRequest):
         )
 
     try:
-        deepseek_resp = await _call_deepseek_async(api_messages, body.temperature)
+        deepseek_resp = await _call_deepseek_async(api_messages, body.temperature, body.tools)
     except Exception as e:
         return JSONResponse(
             {"error": f"DeepSeek API error: {str(e)}"}, status_code=502
