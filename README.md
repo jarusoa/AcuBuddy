@@ -11,25 +11,25 @@ Acumatica ERP coding assistant. Hybrid retrieval (BM25 + dense + cross-encoder r
 ## Quick start
 
 ```powershell
-# 1. Create virtual environment
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+# 1. One-time setup — creates .venv, installs deps, scaffolds .env
+.\setup.ps1
 
-# 2. Install dependencies
-pip install -r requirements.txt
+# 2. Edit .env and add your DEEPSEEK_API_KEY (and optionally ACUBUDDY_PROJECT_ROOT)
+notepad .env
 
-# 3. Set your API key
-copy .env.example .env
-# Edit .env and add your DEEPSEEK_API_KEY (used by OpenCode to call DeepSeek directly)
-
-# 4. Build the index (after adding docs to data/)
+# 3. Build the doc index (after adding Acumatica PDFs to data\)
 python build_index.py --clean
 
-# 5. Launch — the script activates .venv, loads .env, then starts OpenCode
+# 4. (Optional) Build the project catalog from your customization source
+python index_project.py
+
+# 5. Launch — activates .venv, loads .env, starts OpenCode
 .\acubuddy.ps1
 ```
 
-On macOS / Linux: `./acubuddy.sh` instead of `.acubuddy.ps1`. If PowerShell blocks the script with an execution-policy error, run once: `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned`.
+On macOS / Linux: `./setup.sh` and `./acubuddy.sh`. If PowerShell blocks the scripts with an execution-policy error, run once: `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned`.
+
+`setup.ps1` is idempotent — safe to re-run on the same machine, and it's the right move when you clone the repo to a new PC and `import` errors start showing up.
 
 The bundled `opencode.json` points OpenCode straight at DeepSeek and registers AcuBuddy as an MCP server. OpenCode spawns the MCP server on startup and exposes its tools to the model. Project-level agent instructions live in `AGENTS.md` (auto-discovered by OpenCode and most MCP-aware clients) — they enforce the advisory-only "Code Recipe" output format so the model never edits your `.cs` / `.aspx` files directly.
 
