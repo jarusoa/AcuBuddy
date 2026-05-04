@@ -12,8 +12,8 @@ Acumatica ERP coding assistant. Hybrid retrieval (BM25 + dense + cross-encoder r
 
 ```powershell
 # 1. Create virtual environment
-python -m venv venv
-.\venv\Scripts\Activate.ps1
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 
 # 2. Install dependencies
 pip install -r requirements.txt
@@ -25,9 +25,11 @@ copy .env.example .env
 # 4. Build the index (after adding docs to data/)
 python build_index.py --clean
 
-# 5. Run OpenCode in this directory
-opencode
+# 5. Launch — the script activates .venv, loads .env, then starts OpenCode
+.\acubuddy.ps1
 ```
+
+On macOS / Linux: `./acubuddy.sh` instead of `.acubuddy.ps1`. If PowerShell blocks the script with an execution-policy error, run once: `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned`.
 
 The bundled `opencode.json` points OpenCode straight at DeepSeek and registers AcuBuddy as an MCP server. OpenCode spawns the MCP server on startup and exposes its tools to the model. Project-level agent instructions live in `AGENTS.md` (auto-discovered by OpenCode and most MCP-aware clients) — they enforce the advisory-only "Code Recipe" output format so the model never edits your `.cs` / `.aspx` files directly.
 
