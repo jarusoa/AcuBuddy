@@ -6,13 +6,19 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
-if [ -f .venv/bin/activate ]; then
-    # shellcheck disable=SC1091
-    source .venv/bin/activate
-else
-    echo "ERROR: no venv at .venv/bin/activate. Create one with: python -m venv .venv" >&2
+venv_dir=""
+for candidate in .venv venv env; do
+    if [ -f "$candidate/bin/activate" ]; then
+        venv_dir="$candidate"
+        break
+    fi
+done
+if [ -z "$venv_dir" ]; then
+    echo "ERROR: no venv found (looked for .venv, venv, env). Create one with: python -m venv .venv" >&2
     exit 1
 fi
+# shellcheck disable=SC1091
+source "$venv_dir/bin/activate"
 
 if [ -f .env ]; then
     set -a

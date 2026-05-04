@@ -33,7 +33,7 @@ On macOS / Linux: `./acubuddy.sh` instead of `.acubuddy.ps1`. If PowerShell bloc
 
 The bundled `opencode.json` points OpenCode straight at DeepSeek and registers AcuBuddy as an MCP server. OpenCode spawns the MCP server on startup and exposes its tools to the model. Project-level agent instructions live in `AGENTS.md` (auto-discovered by OpenCode and most MCP-aware clients) — they enforce the advisory-only "Code Recipe" output format so the model never edits your `.cs` / `.aspx` files directly.
 
-> The bundled config launches the MCP server with `.venv\Scripts\python.exe` so the venv is used regardless of which shell starts OpenCode. **macOS / Linux users:** edit `opencode.json` and change the path to `.venv/bin/python`. If you don't use a venv at all, change it back to `python`.
+> The bundled `opencode.json` launches the MCP server with bare `python`, which only works if the venv is active. The supplied `acubuddy.ps1` / `acubuddy.sh` launchers handle that for you. If you launch `opencode` directly, activate the venv yourself first.
 
 ## Using with OpenCode
 

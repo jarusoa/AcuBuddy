@@ -17,9 +17,16 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $repoRoot
 
-$venvActivate = Join-Path $repoRoot ".venv\Scripts\Activate.ps1"
-if (-not (Test-Path $venvActivate)) {
-    Write-Error "No venv found at $venvActivate. Create one with: python -m venv .venv"
+$venvActivate = $null
+foreach ($name in @(".venv", "venv", "env")) {
+    $candidate = Join-Path $repoRoot "$name\Scripts\Activate.ps1"
+    if (Test-Path $candidate) {
+        $venvActivate = $candidate
+        break
+    }
+}
+if (-not $venvActivate) {
+    Write-Error "No venv found in $repoRoot (looked for .venv, venv, env). Create one with: python -m venv .venv"
     exit 1
 }
 . $venvActivate

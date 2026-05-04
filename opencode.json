@@ -19,7 +19,7 @@
   "mcp": {
     "acubuddy": {
       "type": "local",
-      "command": [".venv\\Scripts\\python.exe", "-m", "acu_buddy.mcp_server"],
+      "command": ["python", "-m", "acu_buddy.mcp_server"],
       "enabled": true
     }
   }
