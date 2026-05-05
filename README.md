@@ -1,78 +1,203 @@
 # AcuBuddy
 
-RAG-based coding assistant for Acumatica ERP development, powered by DeepSeek V4.
+Acumatica ERP coding assistant. Hybrid retrieval (BM25 + dense + cross-encoder rerank) over the Acumatica documentation, exposed as MCP tools so any MCP-aware client (OpenCode, Claude Code, Continue, Cline, Cursor) can search docs as the model needs them.
 
 ## How it works
 
-1. **Index** — Place Acumatica documentation (PDFs, `.txt`, `.md`, `.xml`, `.cs`, etc.) in `data/`, then run `build_index.py` to create a local vector database.
-2. **Serve** — Start the FastAPI server that exposes an OpenAI-compatible `/v1/chat/completions` endpoint with streaming support.
-3. **Ask** — Point OpenCode (or any OpenAI client) at `http://127.0.0.1:5000/v1`. Every query searches the vector DB for relevant docs, then sends them as context to DeepSeek V4.
+1. **Index** — Place Acumatica documentation (PDFs, `.txt`, `.md`, `.xml`, `.cs`, etc.) in `data/`, then run `build_index.py` to build a hybrid index: dense (BAAI/bge-large-en-v1.5 in Chroma) + sparse (BM25) + section-aware metadata.
+2. **Catalog** (optional) — Point `ACUBUDDY_PROJECT_ROOT` at your customization project and run `index_project.py`. The structured catalog (DACs, graphs, events) backs the project-aware MCP tools.
+3. **Ask** — Run `opencode` (or another MCP-aware client) in this folder. The client auto-spawns the MCP server defined in `opencode.json` and exposes its 13 tools to the model. Answers cite source PDFs with page ranges.
 
 ## Quick start
 
 ```powershell
-# 1. Create virtual environment
-python -m venv venv
-.\venv\Scripts\Activate.ps1
+# 1. One-time setup — creates .venv, installs deps, scaffolds .env
+.\setup.ps1
 
-# 2. Install dependencies
-pip install -r requirements.txt
+# 2. Edit .env and add your DEEPSEEK_API_KEY (and optionally ACUBUDDY_PROJECT_ROOT)
+notepad .env
 
-# 3. Set your API key
-copy .env.example .env
-# Edit .env and add your DEEPSEEK_API_KEY
+# 3. Build the doc index (after adding Acumatica PDFs to data\)
+python build_index.py --clean
 
-# 4. Build the index (after adding docs to data/)
-python build_index.py
+# 4. (Optional) Build the project catalog from your customization source
+python index_project.py
 
-# 5. Start the server
-uvicorn server:app --host 127.0.0.1 --port 5000 --reload
+# 5. Launch — activates .venv, loads .env, starts OpenCode
+.\acubuddy.ps1
 ```
 
-The server starts at `http://127.0.0.1:5000`. Auto-generated API docs at `http://127.0.0.1:5000/docs`.
+On macOS / Linux: `./setup.sh` and `./acubuddy.sh`. If PowerShell blocks the scripts with an execution-policy error, run once: `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned`.
 
-## API Endpoints
+`setup.ps1` is idempotent — safe to re-run on the same machine, and it's the right move when you clone the repo to a new PC and `import` errors start showing up.
 
-| Method | Path                    | Description                    |
-|--------|-------------------------|--------------------------------|
-| GET    | `/health`              | Health check                   |
-| GET    | `/v1/models`           | List available models          |
-| POST   | `/v1/chat/completions` | OpenAI-compatible (streaming + non-streaming) |
+The bundled `opencode.json` points OpenCode straight at DeepSeek and registers AcuBuddy as an MCP server. OpenCode spawns the MCP server on startup and exposes its tools to the model. Project-level agent instructions live in `AGENTS.md` (auto-discovered by OpenCode and most MCP-aware clients) — they enforce the advisory-only "Code Recipe" output format so the model never edits your `.cs` / `.aspx` files directly.
+
+> The bundled `opencode.json` launches the MCP server with bare `python`, which only works if the venv is active. The supplied `acubuddy.ps1` / `acubuddy.sh` launchers handle that for you. If you launch `opencode` directly, activate the venv yourself first.
 
 ## Using with OpenCode
 
 An `opencode.json` is included. OpenCode auto-discovers it when you run `opencode` in this directory.
 
-The config registers AcuBuddy as a custom provider with an OpenAI-compatible backend. When you chat with OpenCode, it sends requests through the local server, which:
-1. Searches the vector DB for relevant Acumatica docs
-2. Injects them as context into the system prompt
-3. Forwards everything to DeepSeek V4 (with streaming)
-4. Returns the response in OpenAI format
+The config:
+- Registers `deepseek-v4-pro` (DeepSeek V4 Pro) as the active model
+- Reads `DEEPSEEK_API_KEY` from your environment
+- Spawns `python -m acu_buddy.mcp_server` and exposes its tools to the model
+- Loads `AGENTS.md` for the agent's system instructions (advisory-only output; never edits project files; emits a structured "Code Recipe")
+
+When you ask an Acumatica question, the model decides whether to call `search_docs`, refines with filters (`area="customization"`, `doc_type="reference"`), and may call `get_section` to read a full section. For project-specific questions it uses `find_dac` / `list_dac_fields` / `find_graph_extensions` etc. Generated code goes through `validate_csharp` before being shown to you, in a Code Recipe block you paste into the Customization Project Editor.
+
+> Note: `deepseek-v4-pro` is the model id used in `opencode.json`. If DeepSeek's API rejects it, swap in the id from their pricing page (commonly `deepseek-chat`) — one-line edit.
 
 ## Configuration
 
-All settings via environment variables (in `.env`):
+Environment variables (in `.env`):
 
-| Variable            | Default              | Description                     |
-|---------------------|----------------------|---------------------------------|
-| `DEEPSEEK_API_KEY`  | —                    | DeepSeek API key (required)     |
-| `ACUBUDDY_SEARCH_K` | `5`                  | Number of doc chunks to retrieve|
+| Variable                   | Default                  | Description                                         |
+|----------------------------|--------------------------|-----------------------------------------------------|
+| `DEEPSEEK_API_KEY`         | —                        | DeepSeek API key (required by OpenCode)             |
+| `ACUBUDDY_PROJECT_ROOT`    | —                        | Customization project source folder (enables project tools) |
+| `ACUBUDDY_SEARCH_K`        | `5`                      | Default `k` for `search_docs`                       |
+| `ACUBUDDY_INDEX_DIR`       | `./chroma_db`            | Where the hybrid index lives                        |
+| `ACUBUDDY_EMBEDDING_MODEL` | `BAAI/bge-large-en-v1.5` | Dense embedding model                               |
+| `ACUBUDDY_RERANKER_MODEL`  | `BAAI/bge-reranker-base` | Cross-encoder for reranking                         |
+| `ACUBUDDY_USE_RERANKER`    | `1`                      | Set `0` to skip reranking (faster, lower quality)   |
 
-Port and host are uvicorn CLI arguments (see quick start).
+## MCP tools
+
+**Doc tools** (always available):
+
+| Tool                | Purpose                                                       |
+|---------------------|---------------------------------------------------------------|
+| `search_docs`       | Hybrid BM25 + dense + reranked search, filterable by area/doc_type |
+| `find_code_samples` | Same, restricted to developer-focused guides                  |
+| `get_section`       | Fetch the full text of one section by source + title           |
+| `list_doc_sources`  | Enumerate every indexed PDF and its sections                   |
+
+**Project tools** (require `ACUBUDDY_PROJECT_ROOT`). Most accept an optional `project=` filter to scope to a single customization project when the root spans multiple companies (see "Multi-company mode" below):
+
+| Tool                    | Purpose                                                    |
+|-------------------------|------------------------------------------------------------|
+| `reindex_project`       | Rebuild the structured catalog from project source         |
+| `list_projects`         | Enumerate detected customization projects with counts      |
+| `find_dac`              | Look up a DAC or DAC extension by name (fuzzy by default)  |
+| `list_dac_fields`       | Enumerate every field on a DAC, with type and attributes   |
+| `find_dac_extensions`   | All `PXCacheExtension<T>` for a given DAC                  |
+| `find_graph_extensions` | All `PXGraphExtension<T>` for a given graph                |
+| `find_event_handlers`   | All event handlers on a DAC, modern + legacy styles        |
+| `search_project`        | Substring search over project source (with file-glob)      |
+| `read_project_file`     | Read a project file by relative path, optional line range  |
+
+**Validation tool**:
+
+| Tool              | Purpose                                                          |
+|-------------------|------------------------------------------------------------------|
+| `validate_csharp` | Static checks against the catalog: field collisions, bad event-handler fields, class-name clashes, unknown targets |
+
+The model can call these multiple times per turn with different filters — that's the main reliability win over single-shot RAG.
+
+## Project awareness
+
+Point AcuBuddy at the source folder where your customization `.cs` files live:
+
+```powershell
+$env:ACUBUDDY_PROJECT_ROOT = "C:\path\to\Your.Customization\Source"
+python index_project.py
+```
+
+Common roots:
+
+- A single customization, unpacked: `C:\inetpub\wwwroot\<Instance>\CstSrc\<ProjectName>\`
+- A single customization, standalone VS project: `C:\Projects\<YourCustomization>\`
+- **Multiple customizations on one Acumatica instance**: `C:\inetpub\wwwroot\<Instance>\` (the whole wwwroot — see below)
+
+Every `.cs` file is auto-tagged with its **project**:
+
+1. The closest enclosing folder containing a `.csproj`, **or**
+2. If the file lives under a `CstSrc` folder, the next directory below it (the Acumatica convention for unpacked customizations), **or**
+3. The first path component below the root.
+
+The walker skips obviously-not-source folders (`Bin`, `obj`, `App_Data`, `App_Code`, `WebSiteCache`, `WebSiteValidation`, `CstPublished`, `node_modules`, `packages`, etc.) case-insensitively.
+
+### Multi-company mode
+
+If you manage multiple customizations on one Acumatica instance, point `ACUBUDDY_PROJECT_ROOT` at the wwwroot itself. AcuBuddy tags every entry by project (each `CstSrc/<Name>/` becomes its own project) and you scope queries via the `project=` filter on the tools:
+
+```
+list_projects()
+  → [{project: "CompanyA", dacs: 12, graphs: 4, events: 31}, ...]
+
+find_dac_extensions("ARInvoice", project="CompanyA")
+  → only CompanyA's extensions on ARInvoice
+
+validate_csharp(code, project="CompanyA")
+  → field-collision checks scoped to CompanyA, so adding UsrFoo for
+    CompanyA won't false-error against CompanyB having the same field
+```
+
+When working on a specific company, **always pass `project=`** to `validate_csharp` and the find-tools — otherwise you'll get noisy false collisions across unrelated customizations. The model is told this in `AGENTS.md`.
+
+This walks every `.cs` file and builds a structured catalog:
+- DACs (anything implementing `IBqlTable`) with their `public virtual` fields and attributes
+- DAC extensions (`PXCacheExtension<T>`) with the target DAC and added fields
+- Graphs (`PXGraph<...>`) with their primary DAC if declared
+- Graph extensions (`PXGraphExtension<T>`) with the target graph
+- Event handlers in both modern (`Events.RowSelected<DAC>`) and legacy (`DAC_Field_Kind`) styles
+
+The catalog is written to `chroma_db/project_catalog.json`. Rebuild after editing your project (or call `reindex_project` from the model). The catalog covers the "list all X" / "find all extensions of Y" questions that vector search misses.
+
+## Code validation
+
+`validate_csharp` runs static checks against the catalog before the user has to compile. The model is expected to call it on every code block it produces.
+
+What it catches:
+
+| Severity   | What                                                                    |
+|------------|-------------------------------------------------------------------------|
+| **error**  | Field collision: adding a field that already exists on the target DAC or any of its cataloged extensions |
+| **error**  | Event handler references a field that doesn't exist on a cataloged DAC  |
+| **warning**| Class-name clash with an existing project class                         |
+| **note**   | Reference to a DAC/graph not in the catalog (likely a stock Acumatica type — verify the namespace) |
+
+What it doesn't catch (yet): syntax errors, type mismatches, missing usings, attribute parameter validity. Those need a real compile. A future enhancement is to shell out to `dotnet build` against the user's Acumatica references when available.
+
+The model can use the result to self-correct: errors → fix and re-validate; only notes → likely fine, just verify unknown targets. The `valid_fields` list returned in `field_not_found` errors lets the model spot the right field directly without another tool call.
+
+## Wiring into other clients
+
+**Claude Code** — add to `.mcp.json` in the repo using AcuBuddy:
+```json
+{
+  "mcpServers": {
+    "acubuddy": {
+      "command": "python",
+      "args": ["-m", "acu_buddy.mcp_server"],
+      "cwd": "C:/path/to/AcuBuddy"
+    }
+  }
+}
+```
+
+**Continue (VS Code)** — in `~/.continue/config.yaml`:
+```yaml
+mcpServers:
+  - name: acubuddy
+    command: python
+    args: ["-m", "acu_buddy.mcp_server"]
+    cwd: C:/path/to/AcuBuddy
+```
+
+**Visual Studio (no native MCP)** — run OpenCode in a terminal pane next to VS, configured the same way. The model uses MCP tools to research and validate, then emits Code Recipes you paste into the Customization Project Editor (it never writes to your `.cs` / `.aspx` files directly — see `AGENTS.md`).
 
 ## Adding documentation
 
 Drop Acumatica documentation files into `data/`. Supported formats:
-- `.pdf` — PDF documents (via PyMuPDF for best extraction)
+- `.pdf` — PDF documents (via PyMuPDF, with TOC-aware section splitting)
 - `.txt`, `.md`, `.rst` — Text/markdown
 - `.xml`, `.html` — Markup
 - `.cs`, `.sql`, `.js`, `.py`, `.ts` — Code files
 
 Then rebuild the index:
 ```powershell
-python build_index.py
+python build_index.py --clean
 ```
-
-## VS Code
-
-`Ctrl+Shift+B` (Run Build Task) starts the server using uvicorn with hot-reload. Or open Command Palette → "Tasks: Run Task" → "Start AcuBuddy Server".
