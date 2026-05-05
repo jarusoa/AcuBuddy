@@ -26,8 +26,21 @@ import datetime as _dt
 import json
 import os
 import re
+import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+
+
+def _warn_walk_error(error: OSError) -> None:
+    """os.walk callback — log directories we can't read and keep going.
+
+    Acumatica's wwwroot has folders IIS holds locks on (Bin\\, log/cache
+    dirs, sometimes App_Data) and ACL'd folders inside CstSrc that the
+    current user can't list. Without this, os.walk silently skips them
+    and you have no idea what was missed.
+    """
+    path = getattr(error, "filename", None) or "<unknown>"
+    print(f"  SKIP {path}: {error.strerror or error}", file=sys.stderr)
 
 CATALOG_VERSION = 1
 CATALOG_FILENAME = "project_catalog.json"
@@ -571,7 +584,7 @@ def build_catalog(project_root: str) -> ProjectCatalog:
     file_count = 0
     project_cache: dict[str, str] = {}
 
-    for dirpath, dirnames, filenames in os.walk(root):
+    for dirpath, dirnames, filenames in os.walk(root, onerror=_warn_walk_error):
         dirnames[:] = [d for d in dirnames if not _is_excluded_dir(d)]
         for fname in filenames:
             if not fname.endswith(".cs"):
@@ -614,7 +627,7 @@ def search_text(project_root: str, query: str, file_glob: str | None = None, max
         import fnmatch
         pattern_re = re.compile(fnmatch.translate(file_glob), re.IGNORECASE)
 
-    for dirpath, dirnames, filenames in os.walk(root):
+    for dirpath, dirnames, filenames in os.walk(root, onerror=_warn_walk_error):
         dirnames[:] = [d for d in dirnames if not _is_excluded_dir(d)]
         for fname in filenames:
             fpath = os.path.join(dirpath, fname)
